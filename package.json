@@ -1,0 +1,22 @@
+{
+  "name": "p2line",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit -p tsconfig.app.json && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "^3.5.25"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.62",
+    "@vitejs/plugin-vue": "^5.1.4",
+    "@vue/tsconfig": "^0.8.1",
+    "typescript": "~5.4.5",
+    "vite": "^5.4.21",
+    "vue-tsc": "^1.8.27"
+  }
+}
