@@ -104,6 +104,7 @@ const controlState = computed(() => ({
   cropWidth: cropWidth.value,
   cropHeight: cropHeight.value,
   pointOrder: pointOrder.value,
+  strokeDirection: strokeDirection.value,
   mergePointsEnabled: mergePointsEnabled.value,
   mergeDistance: mergeDistance.value
 }))
