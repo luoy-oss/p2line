@@ -10,7 +10,11 @@ export interface StrokePoint {
   y: number
 }
 
+export type StrokeDirectionStrategy = 'natural' | 'shortest' | 'trace'
+
 export interface StrokeReconstructionOptions {
+  /** Direction/order policy for reconstructed paths. */
+  directionStrategy?: StrokeDirectionStrategy
   /** Zhang-Suen thinning iteration limit. */
   maxThinningIterations?: number
   /** Drop short branches shorter than this many pixels. Set 0 to keep all. */
@@ -231,41 +235,63 @@ export function orientStrokeDirection(path: StrokePoint[]): StrokePoint[] {
 }
 
 /**
- * Canonicalize individual stroke directions first, then greedily reduce pen-up
- * travel by choosing the next stroke whose *start* is nearest. Unlike the
- * previous implementation, this never reverses a stroke just to save travel,
- * which caused conspicuous bottom-to-top / right-to-left "reverse strokes".
+ * Apply a direction/order policy to reconstructed paths.
  *
- * This is a drawing convention heuristic, not recovery of the original author's
- * true stroke order. For handwriting, language-specific stroke-order models
- * would be needed.
+ * natural: canonicalize open paths, then choose the nearest canonical start.
+ * shortest: greedily choose the nearest endpoint and reverse open paths when
+ * that lowers pen-up travel. This is a fast heuristic, not a global optimum.
+ * trace: preserve skeleton traversal direction and discovery order.
  */
-export function orderStrokePaths(paths: StrokePoint[][]): StrokePoint[][] {
-  const remaining = paths
-    .filter(path => path.length >= 2)
-    .map(path => orientStrokeDirection(path))
+export function orderStrokePaths(
+  paths: StrokePoint[][],
+  strategy: StrokeDirectionStrategy = 'natural'
+): StrokePoint[][] {
+  const remaining = paths.filter(path => path.length >= 2).map(path => path.slice())
   if (!remaining.length) return []
+  if (strategy === 'trace') return remaining
 
-  // Begin at the stroke with the upper-left-most canonical start point.
-  remaining.sort((a, b) => {
-    const pa = a[0], pb = b[0]
-    return pa.y - pb.y || pa.x - pb.x
-  })
+  const isClosed = (path: StrokePoint[]) =>
+    path.length > 2 &&
+    Math.hypot(path[0].x - path[path.length - 1].x, path[0].y - path[path.length - 1].y) <= 1.5
+
+  if (strategy === 'natural') {
+    for (let i = 0; i < remaining.length; i++) remaining[i] = orientStrokeDirection(remaining[i])
+    remaining.sort((a, b) => a[0].y - b[0].y || a[0].x - b[0].x)
+  } else {
+    // Seed from the upper-left-most component for repeatable output.
+    remaining.sort((a, b) => {
+      const pa = a[0], pb = b[0]
+      return pa.y - pb.y || pa.x - pb.x
+    })
+  }
+
   const ordered: StrokePoint[][] = [remaining.shift()!]
-
   while (remaining.length) {
     const end = ordered[ordered.length - 1][ordered[ordered.length - 1].length - 1]
     let bestIndex = 0
+    let bestReverse = false
     let bestCost = Infinity
     for (let i = 0; i < remaining.length; i++) {
-      const start = remaining[i][0]
-      const cost = (end.x - start.x) ** 2 + (end.y - start.y) ** 2
-      if (cost < bestCost) {
-        bestCost = cost
+      const path = remaining[i]
+      const start = path[0]
+      const startCost = (end.x - start.x) ** 2 + (end.y - start.y) ** 2
+      if (startCost < bestCost) {
+        bestCost = startCost
         bestIndex = i
+        bestReverse = false
+      }
+      if (strategy === 'shortest' && !isClosed(path)) {
+        const last = path[path.length - 1]
+        const endCost = (end.x - last.x) ** 2 + (end.y - last.y) ** 2
+        if (endCost < bestCost) {
+          bestCost = endCost
+          bestIndex = i
+          bestReverse = true
+        }
       }
     }
-    ordered.push(remaining.splice(bestIndex, 1)[0])
+    const [next] = remaining.splice(bestIndex, 1)
+    ordered.push(bestReverse ? next.reverse() : next)
   }
   return ordered
 }
@@ -383,7 +409,7 @@ export function reconstructStrokePaths(
     })
     .filter(path => path.length >= 2)
 
-  const strokes = orderStrokePaths(simplified)
+  const strokes = orderStrokePaths(simplified, options.directionStrategy ?? 'natural')
   return {
     strokes,
     diagnostics: {
@@ -399,11 +425,20 @@ export function reconstructStrokePaths(
 }
 
 /** Serialize versioned stroke data; keeps legacy flat point JSON untouched. */
-export function serializeStrokePaths(strokes: StrokePoint[][]): string {
+export function serializeStrokePaths(
+  strokes: StrokePoint[][],
+  strategy: StrokeDirectionStrategy = 'natural'
+): string {
+  const ordering = strategy === 'natural'
+    ? 'natural-direction-nearest-start'
+    : strategy === 'shortest'
+      ? 'greedy-minimum-pen-up-travel'
+      : 'skeleton-trace-order'
   return JSON.stringify({
     version: 2,
     coordinateSystem: 'crop-local',
-    ordering: 'natural-direction-minimum-pen-up-travel',
+    strategy,
+    ordering,
     strokes
   }, null, 2)
 }

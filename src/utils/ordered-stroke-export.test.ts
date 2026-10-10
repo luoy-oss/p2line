@@ -13,13 +13,15 @@ describe('buildOrderedStrokeExport', () => {
       width,
       height,
       { x: 0, y: 0, w: width, h: height },
-      1
+      1,
+      'shortest'
     )
 
     const parsed = JSON.parse(result.json)
     expect(parsed.version).toBe(2)
     expect(parsed.coordinateSystem).toBe('crop-local')
-    expect(parsed.ordering).toBe('natural-direction-minimum-pen-up-travel')
+    expect(parsed.strategy).toBe('shortest')
+    expect(parsed.ordering).toBe('greedy-minimum-pen-up-travel')
     expect(Array.isArray(parsed.strokes)).toBe(true)
     expect(result.pointCount).toBe(parsed.strokes.reduce(
       (sum: number, stroke: Array<{ x: number; y: number }>) => sum + stroke.length,

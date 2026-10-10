@@ -12,6 +12,7 @@ import {
   type PointOrder
 } from '../utils/image-processing'
 import { buildOrderedStrokeExport } from '../utils/ordered-stroke-export'
+import type { StrokeDirectionStrategy } from '../utils/stroke-reconstruction'
 
 type OutputFormat = 'png' | 'jpg' | 'svg' | 'json' | 'strokes'
 
@@ -71,6 +72,18 @@ const paramsFileName = computed(() => {
 const storageKey = 'p2line-ps-params'
 const pointOrderOptions: PointOrder[] = ['scan', 'trace', 'contour']
 const outputFormatOptions: OutputFormat[] = ['png', 'jpg', 'svg', 'json', 'strokes']
+const strokeDirectionOptions: Array<{ value: StrokeDirectionStrategy; label: string }> = [
+  { value: 'natural', label: '自然方向' },
+  { value: 'shortest', label: '最短抬笔距离' },
+  { value: 'trace', label: '原始追踪方向' }
+]
+const strokeDirection = ref<StrokeDirectionStrategy>('natural')
+
+function readStrokeDirection(value: unknown, fallback: StrokeDirectionStrategy): StrokeDirectionStrategy {
+  return typeof value === 'string' && strokeDirectionOptions.some(option => option.value === value)
+    ? value as StrokeDirectionStrategy
+    : fallback
+}
 
 const controlState = computed(() => ({
   filterRadius: filterRadius.value,
@@ -85,6 +98,7 @@ const controlState = computed(() => ({
   cropWidth: cropWidth.value,
   cropHeight: cropHeight.value,
   pointOrder: pointOrder.value,
+  strokeDirection: strokeDirection.value,
   mergePointsEnabled: mergePointsEnabled.value,
   mergeDistance: mergeDistance.value,
   invertOutput: invertOutput.value,
@@ -128,6 +142,7 @@ function buildParamsPayload() {
     invertOutput: invertOutput.value,
     threshold: threshold.value,
     outputFormat: outputFormat.value,
+  strokeDirection: strokeDirection.value,
     autoProcess: autoProcess.value
   }
 }
@@ -150,6 +165,7 @@ function applyParams(data: Record<string, unknown>) {
   invertOutput.value = readBoolean(data.invertOutput, invertOutput.value)
   threshold.value = readNumber(data.threshold, threshold.value)
   outputFormat.value = readOutputFormat(data.outputFormat, outputFormat.value)
+  strokeDirection.value = readStrokeDirection(data.strokeDirection, strokeDirection.value)
   autoProcess.value = readBoolean(data.autoProcess, autoProcess.value)
 }
 
@@ -450,7 +466,7 @@ async function processImage() {
       rect
     )
     
-    const orderedStrokeExport = outputFormat.value === 'strokes' ? buildOrderedStrokeExport(edgeMap, width, height, rect, pointStep.value) : null
+    const orderedStrokeExport = outputFormat.value === 'strokes' ? buildOrderedStrokeExport(edgeMap, width, height, rect, pointStep.value, strokeDirection.value) : null
     const pointList = buildPointList(
       edgeMap,
       width,
@@ -709,6 +725,13 @@ watch(
               <option value="json">点集 / 坐标 JSON（扫描/追踪）</option>
               <option value="strokes">有序笔画点集 JSON</option>
             </select>
+          </label>
+          <label v-if="outputFormat === 'strokes'">
+            笔画方向策略
+            <select v-model="strokeDirection">
+              <option v-for="option in strokeDirectionOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+            </select>
+            <small class="hint">{{ strokeDirection === 'natural' ? '竖向上到下、横向左到右；适合常规线稿。' : strokeDirection === 'shortest' ? '允许反转开放笔画以减少空行程；方向可能不符合自然绘画习惯。' : '保留骨架追踪的方向与发现顺序；结果受图像扫描与拓扑影响。' }}</small>
           </label>
         </div>
       </div>
