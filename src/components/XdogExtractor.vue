@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { reconstructStrokePaths } from '../utils/stroke-reconstruction'
 import { orderPointCloudByStrokes } from '../utils/stroke-point-order'
 import {
@@ -18,7 +18,7 @@ import {
   type PointOrder
 } from '../utils/image-processing'
 
-type OutputFormat = 'png' | 'jpg' | 'svg' | 'json' | 'point-stroke'
+type OutputFormat = 'png' | 'jpg' | 'svg' | 'json'
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const paramsFileInput = ref<HTMLInputElement | null>(null)
@@ -56,8 +56,6 @@ const mergePointsEnabled = ref(false) // 是否合并点集
 const mergeDistance = ref(2) // 合并距离
 
 let pendingTimer: number | null = null
-let cancelPointAnimation: (() => void) | null = null
-onBeforeUnmount(() => cancelPointAnimation?.())
 
 const canProcess = computed(() => Boolean(imageElement.value) && !processing.value)
 
@@ -73,7 +71,7 @@ const paramsFileName = computed(() => {
 
 const storageKey = 'p2line-params'
 const pointOrderOptions: PointOrder[] = ['scan', 'trace', 'contour', 'point-stroke']
-const outputFormatOptions: OutputFormat[] = ['png', 'jpg', 'svg', 'json', 'point-stroke']
+const outputFormatOptions: OutputFormat[] = ['png', 'jpg', 'svg', 'json']
 
 const controlState = computed(() => ({
   lineThickness: lineThickness.value,
