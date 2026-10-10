@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { reconstructStrokePaths } from '../utils/stroke-reconstruction'
-import { orderPointCloudByStrokes } from '../utils/stroke-point-order'
 import {
   createGrayBuffer,
   createXdogStrength,
@@ -17,8 +15,12 @@ import {
   dataUrlToBlob,
   type PointOrder
 } from '../utils/image-processing'
+import { buildOrderedStrokeExportInWorker } from '../utils/ordered-stroke-worker'
+import { reconstructStrokePaths } from '../utils/stroke-reconstruction'
+import { orderPointCloudByStrokes } from '../utils/stroke-point-order'
+import type { StrokeDirectionStrategy } from '../utils/stroke-reconstruction'
 
-type OutputFormat = 'png' | 'jpg' | 'svg' | 'json'
+type OutputFormat = 'png' | 'jpg' | 'svg' | 'json' | 'strokes'
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const paramsFileInput = ref<HTMLInputElement | null>(null)
@@ -27,6 +29,8 @@ const outputCanvas = ref<HTMLCanvasElement | null>(null)
 const imageElement = ref<HTMLImageElement | null>(null)
 const imageName = ref('')
 const processing = ref(false)
+const processingProgress = ref(0)
+const processingStage = ref('准备中')
 const statusText = ref('请上传一张图片')
 const outputFormat = ref<OutputFormat>('png')
 const outputUrl = ref('')
@@ -61,7 +65,7 @@ const canProcess = computed(() => Boolean(imageElement.value) && !processing.val
 
 const outputFileName = computed(() => {
   const base = imageName.value ? imageName.value.replace(/\.[^.]+$/, '') : 'outline'
-  return pointOrder.value === 'point-stroke' ? `${base}-point-stroke-order.json` : `${base}.${outputFormat.value}`
+  return outputFormat.value === 'strokes' ? `${base}-ordered-strokes.json` : pointOrder.value === 'point-stroke' ? `${base}-point-stroke-order.json` : `${base}.${outputFormat.value}`
 })
 
 const paramsFileName = computed(() => {
@@ -71,7 +75,19 @@ const paramsFileName = computed(() => {
 
 const storageKey = 'p2line-params'
 const pointOrderOptions: PointOrder[] = ['scan', 'trace', 'contour', 'point-stroke']
-const outputFormatOptions: OutputFormat[] = ['png', 'jpg', 'svg', 'json']
+const outputFormatOptions: OutputFormat[] = ['png', 'jpg', 'svg', 'json', 'strokes']
+const strokeDirectionOptions: Array<{ value: StrokeDirectionStrategy; label: string }> = [
+  { value: 'natural', label: '自然方向' },
+  { value: 'shortest', label: '最短抬笔距离' },
+  { value: 'trace', label: '原始追踪方向' }
+]
+const strokeDirection = ref<StrokeDirectionStrategy>('natural')
+
+function readStrokeDirection(value: unknown, fallback: StrokeDirectionStrategy): StrokeDirectionStrategy {
+  return typeof value === 'string' && strokeDirectionOptions.some(option => option.value === value)
+    ? value as StrokeDirectionStrategy
+    : fallback
+}
 
 const controlState = computed(() => ({
   lineThickness: lineThickness.value,
@@ -92,6 +108,7 @@ const controlState = computed(() => ({
   cropWidth: cropWidth.value,
   cropHeight: cropHeight.value,
   pointOrder: pointOrder.value,
+  strokeDirection: strokeDirection.value,
   mergePointsEnabled: mergePointsEnabled.value,
   mergeDistance: mergeDistance.value
 }))
@@ -137,6 +154,7 @@ function buildParamsPayload() {
     mergePointsEnabled: mergePointsEnabled.value,
     mergeDistance: mergeDistance.value,
     outputFormat: outputFormat.value,
+    strokeDirection: strokeDirection.value,
     autoProcess: autoProcess.value
   }
 }
@@ -163,6 +181,7 @@ function applyParams(data: Record<string, unknown>) {
   mergePointsEnabled.value = readBoolean(data.mergePointsEnabled, mergePointsEnabled.value)
   mergeDistance.value = readNumber(data.mergeDistance, mergeDistance.value)
   outputFormat.value = readOutputFormat(data.outputFormat, outputFormat.value)
+  strokeDirection.value = readStrokeDirection(data.strokeDirection, strokeDirection.value)
   autoProcess.value = readBoolean(data.autoProcess, autoProcess.value)
 }
 
@@ -315,6 +334,10 @@ async function processImage() {
     return
   }
   processing.value = true
+  processingProgress.value = 0
+  processingStage.value = '准备线稿'
+  // Let Vue paint the progress UI before CPU-heavy preprocessing begins.
+  await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
   try {
     statusText.value = '正在生成线稿...'
     const width = imageElement.value.naturalWidth
@@ -377,6 +400,18 @@ async function processImage() {
       invertColors.value,
       rect
     )
+    let orderedStrokeExport: Awaited<ReturnType<typeof buildOrderedStrokeExportInWorker>> | null = null
+    if (outputFormat.value === 'strokes') {
+      processingStage.value = '启动笔画计算线程'
+      processingProgress.value = 0.02
+      orderedStrokeExport = await buildOrderedStrokeExportInWorker(
+        thickEdgeMap.slice(), width, height, rect, pointStep.value, strokeDirection.value,
+        ({ progress, stage }) => {
+          processingProgress.value = Math.max(processingProgress.value, progress)
+          processingStage.value = stage
+        }
+      )
+    }
     const pointList = buildPointList(
       thickEdgeMap,
       width,
@@ -392,7 +427,7 @@ async function processImage() {
       ? orderPointCloudByStrokes(mergedPoints, reconstructStrokePaths(thickEdgeMap, width, height, rect).strokes)
       : mergedPoints
     const jsonText = JSON.stringify(orderedPoints)
-    outputText.value = outputFormat.value === 'json' ? jsonText : outputFormat.value === 'svg' ? svgText : ''
+    outputText.value = outputFormat.value === 'strokes' ? (orderedStrokeExport?.json ?? '') : outputFormat.value === 'json' ? jsonText : outputFormat.value === 'svg' ? svgText : ''
     if (outputFormat.value === 'png') {
       outputUrl.value = pngUrl
     } else if (outputFormat.value === 'jpg') {
@@ -402,11 +437,72 @@ async function processImage() {
     } else {
       outputUrl.value = ''
     }
-    renderPointsPreview(mergedPoints, rect, invertColors.value)
-    statusText.value = '完成：已生成线稿'
+    if (outputFormat.value === 'strokes') {
+      const strokes = orderedStrokeExport?.strokes ?? []
+      renderOrderedStrokesPreview(strokes, rect, invertColors.value)
+      statusText.value = '完成：' + strokes.length + ' 条有序笔画 · ' + (orderedStrokeExport?.pointCount ?? 0) + ' 个轨迹点'
+    } else {
+      renderPointsPreview(mergedPoints, rect, invertColors.value)
+      statusText.value = '完成：已生成线稿'
+    }
+  } catch (error) {
+    statusText.value = '笔画计算失败：' + (error instanceof Error ? error.message : String(error))
   } finally {
     processing.value = false
+    processingProgress.value = 0
+    processingStage.value = '准备中'
   }
+}
+
+function renderOrderedStrokesPreview(strokes: Array<Array<{ x: number; y: number }>>, rect: { x: number; y: number; w: number; h: number }, invert: boolean) {
+  const canvas = pointsPreviewCanvas.value
+  if (!canvas) return
+  const scale = Math.min(1200 / Math.max(1, rect.w), 1200 / Math.max(1, rect.h))
+  canvas.width = Math.max(1, Math.round(rect.w * scale))
+  canvas.height = Math.max(1, Math.round(rect.h * scale))
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.fillStyle = invert ? '#111827' : '#ffffff'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  const gridStep = Math.max(24, Math.round(Math.min(canvas.width, canvas.height) / 12 / 8) * 8)
+  ctx.strokeStyle = invert ? 'rgba(148,163,184,0.12)' : 'rgba(100,116,139,0.12)'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  for (let x = 0; x <= canvas.width; x += gridStep) { ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, canvas.height) }
+  for (let y = 0; y <= canvas.height; y += gridStep) { ctx.moveTo(0, y + 0.5); ctx.lineTo(canvas.width, y + 0.5) }
+  ctx.stroke()
+  const palette = ['#2563eb', '#0d9488', '#d97706', '#7c3aed', '#db2777', '#0891b2', '#65a30d', '#ea580c']
+  const radius = Math.max(1.2, Math.min(3.5, scale * 0.75))
+  strokes.forEach((stroke, index) => {
+    if (!stroke.length) return
+    const color = palette[index % palette.length]
+    ctx.strokeStyle = color
+    ctx.fillStyle = color
+    ctx.lineWidth = Math.max(1, Math.min(2.5, scale * 0.7))
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.beginPath()
+    ctx.moveTo(stroke[0].x * scale, stroke[0].y * scale)
+    for (let i = 1; i < stroke.length; i++) ctx.lineTo(stroke[i].x * scale, stroke[i].y * scale)
+    ctx.stroke()
+    // Preserve the complete trajectory while sampling decorative markers.
+    const markerStride = Math.max(1, Math.ceil(stroke.length / 250))
+    for (let i = 0; i < stroke.length; i += markerStride) {
+      const point = stroke[i]
+      ctx.beginPath()
+      ctx.arc(point.x * scale, point.y * scale, radius, 0, Math.PI * 2)
+      ctx.fill()
+    }
+    const start = stroke[0], end = stroke[stroke.length - 1]
+    ctx.fillStyle = '#16a34a'
+    ctx.beginPath()
+    ctx.arc(start.x * scale, start.y * scale, radius * 2, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = '#dc2626'
+    ctx.beginPath()
+    ctx.arc(end.x * scale, end.y * scale, radius * 2, 0, Math.PI * 2)
+    ctx.fill()
+  })
 }
 
 function downloadOutput() {
@@ -588,18 +684,31 @@ watch(
               <option value="png">PNG</option>
               <option value="jpg">JPG</option>
               <option value="svg">SVG</option>
-              <option value="json">点集 JSON</option>
+              <option value="json">点集 JSON（扫描/追踪）</option>
+              <option value="strokes">有序笔画点集 JSON</option>
             </select>
+          </label>
+          <label v-if="outputFormat === 'strokes'">
+            笔画方向策略
+            <select v-model="strokeDirection">
+              <option v-for="option in strokeDirectionOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+            </select>
+            <small class="hint">{{ strokeDirection === 'natural' ? '竖向上到下、横向左到右；适合常规线稿。' : strokeDirection === 'shortest' ? '允许反转开放笔画以减少空行程；方向可能不符合自然绘画习惯。' : '保留骨架追踪的方向与发现顺序；结果受图像扫描与拓扑影响。' }}</small>
           </label>
         </div>
       </div>
 
       <div class="panel">
-        <h2>点集预览</h2>
+        <h2>{{ outputFormat === 'strokes' ? '有序笔画预览' : '点集预览' }}</h2>
+        <div v-if="processing && outputFormat === 'strokes'" class="stroke-progress" role="status" aria-live="polite">
+          <div class="stroke-progress-meta"><span>{{ processingStage }}</span><strong>{{ Math.round(processingProgress * 100) }}%</strong></div>
+          <progress :value="processingProgress" max="1"></progress>
+          <small>笔画重建在后台线程运行，页面仍可响应操作</small>
+        </div>
         <div class="preview">
           <canvas ref="pointsPreviewCanvas"></canvas>
         </div>
-        <div class="hint">点集以裁剪区域左上角为 (0, 0)</div>
+        <div class="hint">{{ outputFormat === 'strokes' ? '按笔画顺序分色；绿色为起点、红色为终点，笔画之间不连接。坐标原点为裁剪区域左上角。' : '点集以裁剪区域左上角为 (0, 0)' }}</div>
       </div>
 
       <div class="panel">
@@ -614,3 +723,8 @@ watch(
     </section>
   </div>
 </template>
+.stroke-progress { display: grid; gap: 8px; padding: 12px 14px; margin-bottom: 12px; border: 1px solid var(--border-color, #d7dce2); border-radius: 10px; background: var(--panel-bg, rgba(127,127,127,.04)); }
+.stroke-progress-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
+.stroke-progress progress { display: block; width: 100%; height: 7px; accent-color: #0d9488; }
+.stroke-progress small { opacity: .7; }
+
