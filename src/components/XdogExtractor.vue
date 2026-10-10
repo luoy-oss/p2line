@@ -696,7 +696,7 @@ watch(
               <option value="strokes">有序笔画点集 JSON</option>
             </select>
           </label>
-          <label v-if="outputFormat === 'strokes'">
+          <label v-if="outputFormat === 'strokes' || outputFormat === 'point-stroke'">
             笔画方向策略
             <select v-model="strokeDirection">
               <option v-for="option in strokeDirectionOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
