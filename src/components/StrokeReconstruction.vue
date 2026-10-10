@@ -279,7 +279,11 @@ function downloadText(content: string, name: string, type: string) {
   URL.revokeObjectURL(url)
 }
 
-watch(viewMode, () => {\n  if (result.value) drawPaths(result.value.strokes, isDrawing.value ? animationProgress.value : 1)\n})\n\nwatch([threshold, invert, thinningIterations, minPathLength, simplifyTolerance, sampleSpacing, diagonalConnectivity], () => {
+watch(viewMode, () => {
+  if (result.value) drawPaths(result.value.strokes, isDrawing.value ? animationProgress.value : 1)
+})
+
+watch([threshold, invert, thinningIterations, minPathLength, simplifyTolerance, sampleSpacing, diagonalConnectivity], () => {
   if (sourceImage.value) rebuild()
 })
 onBeforeUnmount(stopAnimation)
@@ -381,7 +385,8 @@ onBeforeUnmount(stopAnimation)
 .stroke-empty { position: absolute; color: #94a3b8; font-size: 14px; pointer-events: none; }
 .stroke-preview-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; color: #738096; font-size: 11px; }
 .stroke-preview-legend span { display: inline-flex; align-items: center; gap: 7px; }
-.stroke-preview-legend i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #2563eb; }\n.stroke-preview-legend .legend-sample { background: #2563eb; }
+.stroke-preview-legend i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #2563eb; }
+.stroke-preview-legend .legend-sample { background: #2563eb; }
 .stroke-preview-legend .legend-start { background: #16a34a; }
 .stroke-preview-legend .legend-end { background: #dc2626; }
 .stroke-preview-legend .legend-mode { margin-left: auto; color: #285eea; font-weight: 700; }
