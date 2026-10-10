@@ -11,8 +11,9 @@ import {
   dataUrlToBlob,
   type PointOrder
 } from '../utils/image-processing'
+import { buildOrderedStrokeExport } from '../utils/ordered-stroke-export'
 
-type OutputFormat = 'png' | 'jpg' | 'svg' | 'json'
+type OutputFormat = 'png' | 'jpg' | 'svg' | 'json' | 'strokes'
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const paramsFileInput = ref<HTMLInputElement | null>(null)
@@ -59,7 +60,7 @@ const canProcess = computed(() => Boolean(imageElement.value) && !processing.val
 
 const outputFileName = computed(() => {
   const base = imageName.value ? imageName.value.replace(/\.[^.]+$/, '') : 'outline'
-  return `${base}-ps.${outputFormat.value}`
+  return outputFormat.value === 'strokes' ? `${base}-ps-ordered-strokes.json` : `${base}-ps.${outputFormat.value}`
 })
 
 const paramsFileName = computed(() => {
@@ -69,7 +70,7 @@ const paramsFileName = computed(() => {
 
 const storageKey = 'p2line-ps-params'
 const pointOrderOptions: PointOrder[] = ['scan', 'trace', 'contour']
-const outputFormatOptions: OutputFormat[] = ['png', 'jpg', 'svg', 'json']
+const outputFormatOptions: OutputFormat[] = ['png', 'jpg', 'svg', 'json', 'strokes']
 
 const controlState = computed(() => ({
   filterRadius: filterRadius.value,
@@ -449,6 +450,7 @@ async function processImage() {
       rect
     )
     
+    const orderedStrokeExport = outputFormat.value === 'strokes' ? buildOrderedStrokeExport(edgeMap, width, height, rect, pointStep.value) : null
     const pointList = buildPointList(
       edgeMap,
       width,
@@ -463,7 +465,7 @@ async function processImage() {
       : pointList
       
     const jsonText = JSON.stringify(mergedPoints)
-    outputText.value = outputFormat.value === 'json' ? jsonText : outputFormat.value === 'svg' ? svgText : ''
+    outputText.value = outputFormat.value === 'strokes' ? (orderedStrokeExport?.json ?? '') : outputFormat.value === 'json' ? jsonText : outputFormat.value === 'svg' ? svgText : ''
     
     if (outputFormat.value === 'png') {
       outputUrl.value = pngUrl
@@ -475,12 +477,67 @@ async function processImage() {
       outputUrl.value = ''
     }
     
-    renderPointsPreview(mergedPoints, rect, invertOutput.value)
-    statusText.value = '完成：PS 流程线稿提取'
+    if (outputFormat.value === 'strokes') {
+      const strokes = orderedStrokeExport?.strokes ?? []
+      renderOrderedStrokesPreview(strokes, rect, invertOutput.value)
+      statusText.value = '完成：' + strokes.length + ' 条有序笔画 · ' + (orderedStrokeExport?.pointCount ?? 0) + ' 个轨迹点'
+    } else {
+      renderPointsPreview(mergedPoints, rect, invertOutput.value)
+      statusText.value = '完成：PS 流程线稿提取'
+    }
 
   } finally {
     processing.value = false
   }
+}
+
+function renderOrderedStrokesPreview(strokes: Array<Array<{ x: number; y: number }>>, rect: { x: number; y: number; w: number; h: number }, invert: boolean) {
+  const canvas = pointsPreviewCanvas.value
+  if (!canvas) return
+  const scale = Math.min(1200 / Math.max(1, rect.w), 1200 / Math.max(1, rect.h))
+  canvas.width = Math.max(1, Math.round(rect.w * scale))
+  canvas.height = Math.max(1, Math.round(rect.h * scale))
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.fillStyle = invert ? '#111827' : '#ffffff'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  const gridStep = Math.max(24, Math.round(Math.min(canvas.width, canvas.height) / 12 / 8) * 8)
+  ctx.strokeStyle = invert ? 'rgba(148,163,184,0.12)' : 'rgba(100,116,139,0.12)'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  for (let x = 0; x <= canvas.width; x += gridStep) { ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, canvas.height) }
+  for (let y = 0; y <= canvas.height; y += gridStep) { ctx.moveTo(0, y + 0.5); ctx.lineTo(canvas.width, y + 0.5) }
+  ctx.stroke()
+  const palette = ['#2563eb', '#0d9488', '#d97706', '#7c3aed', '#db2777', '#0891b2', '#65a30d', '#ea580c']
+  const radius = Math.max(1.2, Math.min(3.5, scale * 0.75))
+  strokes.forEach((stroke, index) => {
+    if (!stroke.length) return
+    const color = palette[index % palette.length]
+    ctx.strokeStyle = color
+    ctx.fillStyle = color
+    ctx.lineWidth = Math.max(1, Math.min(2.5, scale * 0.7))
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.beginPath()
+    ctx.moveTo(stroke[0].x * scale, stroke[0].y * scale)
+    for (let i = 1; i < stroke.length; i++) ctx.lineTo(stroke[i].x * scale, stroke[i].y * scale)
+    ctx.stroke()
+    for (const point of stroke) {
+      ctx.beginPath()
+      ctx.arc(point.x * scale, point.y * scale, radius, 0, Math.PI * 2)
+      ctx.fill()
+    }
+    const start = stroke[0], end = stroke[stroke.length - 1]
+    ctx.fillStyle = '#16a34a'
+    ctx.beginPath()
+    ctx.arc(start.x * scale, start.y * scale, radius * 2, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = '#dc2626'
+    ctx.beginPath()
+    ctx.arc(end.x * scale, end.y * scale, radius * 2, 0, Math.PI * 2)
+    ctx.fill()
+  })
+  pointCount.value = strokes.reduce((sum, stroke) => sum + stroke.length, 0)
 }
 
 function downloadOutput() {
@@ -508,7 +565,7 @@ function downloadOutput() {
 
 
 watch(showPointOrder, () => {
-  if (imageElement.value && lastPreviewPoints.length) {
+  if (outputFormat.value !== 'strokes' && imageElement.value && lastPreviewPoints.length) {
     renderPointsPreview(lastPreviewPoints, lastPreviewRect, lastPreviewInvert)
   }
 })
@@ -649,17 +706,18 @@ watch(
               <option value="png">PNG</option>
               <option value="jpg">JPG</option>
               <option value="svg">SVG</option>
-              <option value="json">点集 / 坐标 JSON</option>
+              <option value="json">点集 / 坐标 JSON（扫描/追踪）</option>
+              <option value="strokes">有序笔画点集 JSON</option>
             </select>
           </label>
         </div>
       </div>
 
-      <div v-show="outputFormat === 'json'" class="panel point-visual-panel" :class="{ 'point-visual-panel--active': outputFormat === 'json' }">
+      <div v-show="outputFormat === 'json' || outputFormat === 'strokes'" class="panel point-visual-panel" :class="{ 'point-visual-panel--active': outputFormat === 'json' }">
         <div class="panel-heading">
           <div>
             <p class="eyebrow">POINT CLOUD</p>
-            <h2>点集可视化</h2>
+            <h2>{{ outputFormat === 'strokes' ? '有序笔画预览' : '点集可视化' }}</h2>
           </div>
           <span class="point-count">{{ pointCount.toLocaleString() }} <small>points</small></span>
         </div>
@@ -668,7 +726,7 @@ watch(
           <div v-if="!imageElement" class="point-empty">上传图片后在此查看点集分布</div>
         </div>
         <div class="point-visual-footer">
-          <span>原点 (0, 0) · 裁剪区域坐标</span>
+          <span>{{ outputFormat === 'strokes' ? '按笔画顺序分色 · 绿起点 / 红终点 · 不跨笔画连线' : '原点 (0, 0) · 裁剪区域坐标' }}</span>
           <label class="inline-toggle"><input v-model="showPointOrder" type="checkbox" /> 标记点集首尾</label>
         </div>
         <p v-if="showPointOrder && pointOrder === 'scan'" class="hint">为避免把扁平点集误画成连续笔画，这里只标记点序列的首尾，不连接采样点。</p>
@@ -679,16 +737,16 @@ watch(
         <div class="panel-heading">
           <div>
             <p class="eyebrow">EXPORT</p>
-            <h2>{{ outputFormat === 'json' ? '点集数据' : '线稿输出' }}</h2>
+            <h2>{{ outputFormat === 'json' || outputFormat === 'strokes' ? '点集数据' : '线稿输出' }}</h2>
           </div>
           <span class="format-pill">{{ outputFormat.toUpperCase() }}</span>
         </div>
         <div class="preview output-preview">
           <img v-if="outputUrl" :src="outputUrl" alt="output" />
-          <textarea v-else v-model="outputText" readonly :placeholder="outputFormat === 'json' ? '生成后的坐标点 JSON 将显示在这里' : '当前格式没有文本预览'"></textarea>
+          <textarea v-else v-model="outputText" readonly :placeholder="outputFormat === 'json' || outputFormat === 'strokes' ? '生成后的坐标点 JSON 将显示在这里' : '当前格式没有文本预览'"></textarea>
         </div>
         <canvas ref="outputCanvas" class="hidden"></canvas>
-        <div class="hint">点集 JSON 保留为坐标数组；PNG / JPG / SVG 为线稿输出。</div>
+        <div class="hint">普通点集 JSON 保持旧格式；有序笔画 JSON 按笔画分组保存绘画顺序与抬笔边界。</div>
       </div>
     </section>
   </div>
