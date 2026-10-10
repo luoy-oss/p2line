@@ -523,6 +523,7 @@ async function processImage() {
       renderOrderedStrokesPreview(strokes, rect, invertOutput.value)
       statusText.value = '完成：' + strokes.length + ' 条有序笔画 · ' + (orderedStrokeExport?.pointCount ?? 0) + ' 个轨迹点'
     } else if (outputFormat.value === 'point-stroke') {
+      pointCount.value = orderedPoints.length
       cancelPointAnimation = animateOriginalPointCloud(
         pointsPreviewCanvas.value!, orderedPoints, rect, invertOutput.value, 1200
       )
