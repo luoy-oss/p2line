@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import {
   createGrayBuffer,
   buildSvg,
@@ -12,9 +12,10 @@ import {
   type PointOrder
 } from '../utils/image-processing'
 import { buildOrderedStrokeExportInWorker } from '../utils/ordered-stroke-worker'
+import { animateOriginalPointCloud, orderPointCloudByStrokes } from '../utils/stroke-point-order'
 import type { StrokeDirectionStrategy } from '../utils/stroke-reconstruction'
 
-type OutputFormat = 'png' | 'jpg' | 'svg' | 'json' | 'strokes'
+type OutputFormat = 'png' | 'jpg' | 'svg' | 'json' | 'point-stroke' | 'strokes'
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const paramsFileInput = ref<HTMLInputElement | null>(null)
@@ -58,12 +59,14 @@ const invertOutput = ref(false)             // 最终反色
 const threshold = ref(128)                  // 二值化阈值（用于点集提取）
 
 let pendingTimer: number | null = null
+let cancelPointAnimation: (() => void) | null = null
+onBeforeUnmount(() => cancelPointAnimation?.())
 
 const canProcess = computed(() => Boolean(imageElement.value) && !processing.value)
 
 const outputFileName = computed(() => {
   const base = imageName.value ? imageName.value.replace(/\.[^.]+$/, '') : 'outline'
-  return outputFormat.value === 'strokes' ? `${base}-ps-ordered-strokes.json` : `${base}-ps.${outputFormat.value}`
+  return outputFormat.value === 'strokes' ? `${base}-ps-ordered-strokes.json` : outputFormat.value === 'point-stroke' ? `${base}-ps-point-stroke-order.json` : `${base}-ps.${outputFormat.value}`
 })
 
 const paramsFileName = computed(() => {
@@ -73,7 +76,7 @@ const paramsFileName = computed(() => {
 
 const storageKey = 'p2line-ps-params'
 const pointOrderOptions: PointOrder[] = ['scan', 'trace', 'contour']
-const outputFormatOptions: OutputFormat[] = ['png', 'jpg', 'svg', 'json', 'strokes']
+const outputFormatOptions: OutputFormat[] = ['png', 'jpg', 'svg', 'json', 'point-stroke', 'strokes']
 const strokeDirectionOptions: Array<{ value: StrokeDirectionStrategy; label: string }> = [
   { value: 'natural', label: '自然方向' },
   { value: 'shortest', label: '最短抬笔距离' },
@@ -497,8 +500,11 @@ async function processImage() {
       ? applyPointMerge(pointList, mergeDistance.value)
       : pointList
       
-    const jsonText = JSON.stringify(mergedPoints)
-    outputText.value = outputFormat.value === 'strokes' ? (orderedStrokeExport?.json ?? '') : outputFormat.value === 'json' ? jsonText : outputFormat.value === 'svg' ? svgText : ''
+    const orderedPoints = outputFormat.value === 'point-stroke'
+      ? orderPointCloudByStrokes(mergedPoints, orderedStrokeExport?.strokes ?? []).points
+      : mergedPoints
+    const jsonText = JSON.stringify(outputFormat.value === 'point-stroke' ? orderedPoints : mergedPoints)
+    outputText.value = outputFormat.value === 'strokes' ? (orderedStrokeExport?.json ?? '') : (outputFormat.value === 'json' || outputFormat.value === 'point-stroke') ? jsonText : outputFormat.value === 'svg' ? svgText : ''
     
     if (outputFormat.value === 'png') {
       outputUrl.value = pngUrl
@@ -510,10 +516,17 @@ async function processImage() {
       outputUrl.value = ''
     }
     
+    cancelPointAnimation?.()
+    cancelPointAnimation = null
     if (outputFormat.value === 'strokes') {
       const strokes = orderedStrokeExport?.strokes ?? []
       renderOrderedStrokesPreview(strokes, rect, invertOutput.value)
       statusText.value = '完成：' + strokes.length + ' 条有序笔画 · ' + (orderedStrokeExport?.pointCount ?? 0) + ' 个轨迹点'
+    } else if (outputFormat.value === 'point-stroke') {
+      cancelPointAnimation = animateOriginalPointCloud(
+        pointsPreviewCanvas.value!, orderedPoints, rect, invertOutput.value, 1200
+      )
+      statusText.value = '完成：原始点集笔画顺序模拟 · ' + orderedPoints.length + ' 个原始点'
     } else {
       renderPointsPreview(mergedPoints, rect, invertOutput.value)
       statusText.value = '完成：PS 流程线稿提取'
@@ -747,6 +760,7 @@ watch(
               <option value="jpg">JPG</option>
               <option value="svg">SVG</option>
               <option value="json">点集 / 坐标 JSON（扫描/追踪）</option>
+              <option value="point-stroke">点集 JSON（笔画顺序模拟）</option>
               <option value="strokes">有序笔画点集 JSON</option>
             </select>
           </label>
@@ -760,15 +774,15 @@ watch(
         </div>
       </div>
 
-      <div v-show="outputFormat === 'json' || outputFormat === 'strokes'" class="panel point-visual-panel" :class="{ 'point-visual-panel--active': outputFormat === 'json' }">
+      <div v-show="outputFormat === 'json' || outputFormat === 'point-stroke' || outputFormat === 'strokes'" class="panel point-visual-panel" :class="{ 'point-visual-panel--active': outputFormat === 'json' }">
         <div class="panel-heading">
           <div>
             <p class="eyebrow">POINT CLOUD</p>
-            <h2>{{ outputFormat === 'strokes' ? '有序笔画预览' : '点集可视化' }}</h2>
+            <h2>{{ outputFormat === 'strokes' ? '有序笔画预览' : outputFormat === 'point-stroke' ? '原始点集笔画模拟' : '点集可视化' }}</h2>
           </div>
           <span class="point-count">{{ pointCount.toLocaleString() }} <small>points</small></span>
         </div>
-        <div v-if="processing && outputFormat === 'strokes'" class="stroke-progress" role="status" aria-live="polite">
+        <div v-if="processing && (outputFormat === 'strokes' || outputFormat === 'point-stroke')" class="stroke-progress" role="status" aria-live="polite">
           <div class="stroke-progress-meta"><span>{{ processingStage }}</span><strong>{{ Math.round(processingProgress * 100) }}%</strong></div>
           <progress :value="processingProgress" max="1"></progress>
           <small>笔画重建在后台线程运行，页面仍可响应操作</small>
@@ -778,7 +792,7 @@ watch(
           <div v-if="!imageElement" class="point-empty">上传图片后在此查看点集分布</div>
         </div>
         <div class="point-visual-footer">
-          <span>{{ outputFormat === 'strokes' ? '按笔画顺序分色 · 绿起点 / 红终点 · 不跨笔画连线' : '原点 (0, 0) · 裁剪区域坐标' }}</span>
+          <span>{{ outputFormat === 'strokes' ? '按骨架笔画顺序绘制 · 不跨笔画连线' : outputFormat === 'point-stroke' ? '保留原始点坐标 · 按重建路径顺序逐点呈现 · 不拟合、不连线' : '原点 (0, 0) · 裁剪区域坐标' }}</span>
           <label class="inline-toggle"><input v-model="showPointOrder" type="checkbox" /> 标记点集首尾</label>
         </div>
         <p v-if="showPointOrder && pointOrder === 'scan'" class="hint">为避免把扁平点集误画成连续笔画，这里只标记点序列的首尾，不连接采样点。</p>
@@ -789,13 +803,13 @@ watch(
         <div class="panel-heading">
           <div>
             <p class="eyebrow">EXPORT</p>
-            <h2>{{ outputFormat === 'json' || outputFormat === 'strokes' ? '点集数据' : '线稿输出' }}</h2>
+            <h2>{{ outputFormat === 'json' || outputFormat === 'point-stroke' || outputFormat === 'strokes' ? '点集数据' : '线稿输出' }}</h2>
           </div>
           <span class="format-pill">{{ outputFormat.toUpperCase() }}</span>
         </div>
         <div class="preview output-preview">
           <img v-if="outputUrl" :src="outputUrl" alt="output" />
-          <textarea v-else v-model="outputText" readonly :placeholder="outputFormat === 'json' || outputFormat === 'strokes' ? '生成后的坐标点 JSON 将显示在这里' : '当前格式没有文本预览'"></textarea>
+          <textarea v-else v-model="outputText" readonly :placeholder="outputFormat === 'json' || outputFormat === 'point-stroke' || outputFormat === 'strokes' ? '生成后的坐标点 JSON 将显示在这里' : '当前格式没有文本预览'"></textarea>
         </div>
         <canvas ref="outputCanvas" class="hidden"></canvas>
         <div class="hint">普通点集 JSON 保持旧格式；有序笔画 JSON 按笔画分组保存绘画顺序与抬笔边界。</div>
