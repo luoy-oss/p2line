@@ -476,7 +476,7 @@ async function processImage() {
     )
     
     let orderedStrokeExport: Awaited<ReturnType<typeof buildOrderedStrokeExportInWorker>> | null = null
-    if (outputFormat.value === 'strokes') {
+    if (outputFormat.value === 'strokes' || outputFormat.value === 'point-stroke') {
       processingStage.value = '启动笔画计算线程'
       processingProgress.value = 0.02
       orderedStrokeExport = await buildOrderedStrokeExportInWorker(
