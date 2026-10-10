@@ -450,7 +450,7 @@ async function processImage() {
       rect
     )
     
-    const orderedStrokeExport = buildOrderedStrokeExport(edgeMap, width, height, rect, pointStep.value)
+    const orderedStrokeExport = outputFormat.value === 'strokes' ? buildOrderedStrokeExport(edgeMap, width, height, rect, pointStep.value) : null
     const pointList = buildPointList(
       edgeMap,
       width,
@@ -465,7 +465,7 @@ async function processImage() {
       : pointList
       
     const jsonText = JSON.stringify(mergedPoints)
-    outputText.value = outputFormat.value === 'strokes' ? orderedStrokeExport.json : outputFormat.value === 'json' ? jsonText : outputFormat.value === 'svg' ? svgText : ''
+    outputText.value = outputFormat.value === 'strokes' ? (orderedStrokeExport?.json ?? '') : outputFormat.value === 'json' ? jsonText : outputFormat.value === 'svg' ? svgText : ''
     
     if (outputFormat.value === 'png') {
       outputUrl.value = pngUrl
@@ -478,8 +478,9 @@ async function processImage() {
     }
     
     if (outputFormat.value === 'strokes') {
-      renderOrderedStrokesPreview(orderedStrokeExport.strokes, rect, invertOutput.value)
-      statusText.value = '完成：' + orderedStrokeExport.strokes.length + ' 条有序笔画 · ' + orderedStrokeExport.pointCount + ' 个轨迹点'
+      const strokes = orderedStrokeExport?.strokes ?? []
+      renderOrderedStrokesPreview(strokes, rect, invertOutput.value)
+      statusText.value = '完成：' + strokes.length + ' 条有序笔画 · ' + (orderedStrokeExport?.pointCount ?? 0) + ' 个轨迹点'
     } else {
       renderPointsPreview(mergedPoints, rect, invertOutput.value)
       statusText.value = '完成：PS 流程线稿提取'
@@ -557,7 +558,7 @@ function downloadOutput() {
 
 
 watch(showPointOrder, () => {
-  if (imageElement.value && lastPreviewPoints.length) {
+  if (outputFormat.value !== 'strokes' && imageElement.value && lastPreviewPoints.length) {
     renderPointsPreview(lastPreviewPoints, lastPreviewRect, lastPreviewInvert)
   }
 })
@@ -705,7 +706,7 @@ watch(
         </div>
       </div>
 
-      <div v-show="outputFormat === 'json'" class="panel point-visual-panel" :class="{ 'point-visual-panel--active': outputFormat === 'json' }">
+      <div v-show="outputFormat === 'json' || outputFormat === 'strokes'" class="panel point-visual-panel" :class="{ 'point-visual-panel--active': outputFormat === 'json' }">
         <div class="panel-heading">
           <div>
             <p class="eyebrow">POINT CLOUD</p>
