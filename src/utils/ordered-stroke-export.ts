@@ -1,7 +1,8 @@
 import {
   reconstructStrokePaths,
   serializeStrokePaths,
-  type StrokePoint
+  type StrokePoint,
+  type StrokeDirectionStrategy
 } from './stroke-reconstruction'
 
 export interface OrderedStrokeExport {
@@ -20,19 +21,21 @@ export function buildOrderedStrokeExport(
   width: number,
   height: number,
   rect: { x: number; y: number; w: number; h: number },
-  sampleSpacing: number
+  sampleSpacing: number,
+  strategy: StrokeDirectionStrategy = 'natural'
 ): OrderedStrokeExport {
   const result = reconstructStrokePaths(edge, width, height, rect, {
     maxThinningIterations: 100,
     minPathLength: 0,
     simplifyTolerance: 0.35,
     sampleSpacing: Math.max(0.5, sampleSpacing),
-    diagonalConnectivity: false
+    diagonalConnectivity: false,
+    directionStrategy: strategy
   })
   const strokes = result.strokes
   return {
     strokes,
     pointCount: strokes.reduce((total, stroke) => total + stroke.length, 0),
-    json: serializeStrokePaths(strokes)
+    json: serializeStrokePaths(strokes, strategy)
   }
 }
