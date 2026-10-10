@@ -1,4 +1,3 @@
-/// <reference lib="webworker" />
 import { reconstructStrokePaths, serializeStrokePaths, type StrokeDirectionStrategy } from './stroke-reconstruction'
 
 type Request = {
@@ -10,7 +9,12 @@ type Request = {
   strategy: StrokeDirectionStrategy
 }
 
-self.onmessage = (event: MessageEvent<Request>) => {
+const workerScope = self as unknown as {
+  onmessage: ((event: MessageEvent<Request>) => void) | null
+  postMessage: (message: unknown) => void
+}
+
+workerScope.onmessage = (event: MessageEvent<Request>) => {
   const { edge, width, height, rect, sampleSpacing, strategy } = event.data
   try {
     const result = reconstructStrokePaths(
@@ -25,7 +29,7 @@ self.onmessage = (event: MessageEvent<Request>) => {
         sampleSpacing: Math.max(0.5, sampleSpacing),
         diagonalConnectivity: false,
         directionStrategy: strategy,
-        onProgress: (progress, stage) => self.postMessage({ type: 'progress', progress, stage })
+        onProgress: (progress, stage) => workerScope.postMessage({ type: 'progress', progress, stage })
       }
     )
     const pointCount = result.strokes.reduce((total, stroke) => total + stroke.length, 0)
