@@ -11,7 +11,6 @@ import {
   dataUrlToBlob,
   type PointOrder
 } from '../utils/image-processing'
-import { buildOrderedStrokeExport } from '../utils/ordered-stroke-export'
 import { buildOrderedStrokeExportInWorker } from '../utils/ordered-stroke-worker'
 import type { StrokeDirectionStrategy } from '../utils/stroke-reconstruction'
 
@@ -145,7 +144,7 @@ function buildParamsPayload() {
     invertOutput: invertOutput.value,
     threshold: threshold.value,
     outputFormat: outputFormat.value,
-  strokeDirection: strokeDirection.value,
+    strokeDirection: strokeDirection.value,
     autoProcess: autoProcess.value
   }
 }
@@ -518,6 +517,8 @@ async async function processImage() {
       statusText.value = '完成：PS 流程线稿提取'
     }
 
+  } catch (error) {
+    statusText.value = '笔画计算失败：' + (error instanceof Error ? error.message : String(error))
   } finally {
     processing.value = false
     processingProgress.value = 0
