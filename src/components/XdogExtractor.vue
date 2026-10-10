@@ -65,7 +65,7 @@ const canProcess = computed(() => Boolean(imageElement.value) && !processing.val
 
 const outputFileName = computed(() => {
   const base = imageName.value ? imageName.value.replace(/\.[^.]+$/, '') : 'outline'
-  return outputFormat.value === 'strokes' ? `${base}-ordered-strokes.json` : pointOrder.value === 'point-stroke' ? `${base}-point-stroke-order.json` : `${base}.${outputFormat.value}`
+  return outputFormat.value === 'strokes' ? `${base}-ordered-strokes.json` : outputFormat.value === 'json' && pointOrder.value === 'point-stroke' ? `${base}-point-stroke-order.json` : `${base}.${outputFormat.value}`
 })
 
 const paramsFileName = computed(() => {
@@ -423,7 +423,7 @@ async function processImage() {
     const mergedPoints = mergePointsEnabled.value
       ? applyPointMerge(pointList, mergeDistance.value)
       : pointList
-    const orderedPoints = pointOrder.value === 'point-stroke'
+    const orderedPoints = outputFormat.value === 'json' && pointOrder.value === 'point-stroke'
       ? orderPointCloudByStrokes(mergedPoints, reconstructStrokePaths(thickEdgeMap, width, height, rect).strokes)
       : mergedPoints
     const jsonText = JSON.stringify(orderedPoints)
