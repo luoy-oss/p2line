@@ -376,7 +376,7 @@ async function processImage() {
       invertColors.value,
       rect
     )
-    const orderedStrokeExport = buildOrderedStrokeExport(thickEdgeMap, width, height, rect, pointStep.value)
+    const orderedStrokeExport = outputFormat.value === 'strokes' ? buildOrderedStrokeExport(thickEdgeMap, width, height, rect, pointStep.value) : null
     const pointList = buildPointList(
       thickEdgeMap,
       width,
@@ -389,7 +389,7 @@ async function processImage() {
       ? applyPointMerge(pointList, mergeDistance.value)
       : pointList
     const jsonText = JSON.stringify(mergedPoints)
-    outputText.value = outputFormat.value === 'strokes' ? orderedStrokeExport.json : outputFormat.value === 'json' ? jsonText : outputFormat.value === 'svg' ? svgText : ''
+    outputText.value = outputFormat.value === 'strokes' ? (orderedStrokeExport?.json ?? '') : outputFormat.value === 'json' ? jsonText : outputFormat.value === 'svg' ? svgText : ''
     if (outputFormat.value === 'png') {
       outputUrl.value = pngUrl
     } else if (outputFormat.value === 'jpg') {
@@ -400,8 +400,9 @@ async function processImage() {
       outputUrl.value = ''
     }
     if (outputFormat.value === 'strokes') {
-      renderOrderedStrokesPreview(orderedStrokeExport.strokes, rect, invertColors.value)
-      statusText.value = '完成：' + orderedStrokeExport.strokes.length + ' 条有序笔画 · ' + orderedStrokeExport.pointCount + ' 个轨迹点'
+      const strokes = orderedStrokeExport?.strokes ?? []
+      renderOrderedStrokesPreview(strokes, rect, invertColors.value)
+      statusText.value = '完成：' + strokes.length + ' 条有序笔画 · ' + (orderedStrokeExport?.pointCount ?? 0) + ' 个轨迹点'
     } else {
       renderPointsPreview(mergedPoints, rect, invertColors.value)
       statusText.value = '完成：已生成线稿'
