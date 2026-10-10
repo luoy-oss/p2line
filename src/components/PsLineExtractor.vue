@@ -362,6 +362,8 @@ async function processImage() {
   processing.value = true
   processingProgress.value = 0
   processingStage.value = '准备线稿'
+  // Let Vue paint the progress UI before CPU-heavy preprocessing begins.
+  await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
   try {
     statusText.value = '正在生成线稿 (PS模式)...'
     const width = imageElement.value.naturalWidth
