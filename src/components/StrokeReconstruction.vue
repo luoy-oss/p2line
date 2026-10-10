@@ -318,13 +318,24 @@ onBeforeUnmount(stopAnimation)
         <p class="stroke-note">路径顺序采用减少抬笔距离的启发式排序，不代表原作者真实书写顺序。交叉点处会拆成多段，避免随意吞并分支。</p>
       </section>
       <section class="stroke-panel stroke-preview-panel">
-        <h2>轨迹预览</h2>
+        <div class="stroke-preview-heading">
+          <div>
+            <p class="stroke-eyebrow">STROKE INSPECTOR</p>
+            <h2>笔画轨迹可视化</h2>
+            <p class="stroke-subtitle">检查轨迹连贯性、采样点分布与每条笔画的起收方向</p>
+          </div>
+          <div class="stroke-view-switch" role="group" aria-label="渲染模式">
+            <button type="button" :class="{ active: viewMode === 'lines' }" @click="viewMode = 'lines'">线条</button>
+            <button type="button" :class="{ active: viewMode === 'points' }" @click="viewMode = 'points'">点集</button>
+            <button type="button" :class="{ active: viewMode === 'combined' }" @click="viewMode = 'combined'">叠加</button>
+          </div>
+        </div>
         <div class="stroke-canvas-wrap" :class="{ 'stroke-canvas-wrap--dark': invert }">
           <canvas ref="canvas"></canvas>
           <div v-if="!sourceImage" class="stroke-empty">上传图片开始重建</div>
         </div>
         <div class="stroke-preview-legend">
-          <span><i class="legend-sample"></i> 采样点</span>
+          <span><i class="legend-sample"></i> 轨迹点</span>
           <span><i class="legend-start"></i> 笔画起点</span>
           <span><i class="legend-end"></i> 笔画终点</span>
           <span class="legend-mode">{{ pointModeLabel }}</span>
@@ -370,7 +381,7 @@ onBeforeUnmount(stopAnimation)
 .stroke-empty { position: absolute; color: #94a3b8; font-size: 14px; pointer-events: none; }
 .stroke-preview-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; color: #738096; font-size: 11px; }
 .stroke-preview-legend span { display: inline-flex; align-items: center; gap: 7px; }
-.stroke-preview-legend i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #2563eb; }
+.stroke-preview-legend i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #2563eb; }\n.stroke-preview-legend .legend-sample { background: #2563eb; }
 .stroke-preview-legend .legend-start { background: #16a34a; }
 .stroke-preview-legend .legend-end { background: #dc2626; }
 .stroke-preview-legend .legend-mode { margin-left: auto; color: #285eea; font-weight: 700; }
