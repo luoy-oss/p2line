@@ -451,7 +451,6 @@ function renderOrderedStrokesPreview(strokes: Array<Array<{ x: number; y: number
     ctx.arc(end.x * scale, end.y * scale, radius * 2, 0, Math.PI * 2)
     ctx.fill()
   })
-  pointCount.value = strokes.reduce((sum, stroke) => sum + stroke.length, 0)
 }
 
 function downloadOutput() {
