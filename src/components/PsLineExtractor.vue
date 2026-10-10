@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { reconstructStrokePaths } from '../utils/stroke-reconstruction'
 import { orderPointCloudByStrokes } from '../utils/stroke-point-order'
 import {
@@ -14,7 +14,7 @@ import {
   type PointOrder
 } from '../utils/image-processing'
 
-type OutputFormat = 'png' | 'jpg' | 'svg' | 'json' | 'point-stroke'
+type OutputFormat = 'png' | 'jpg' | 'svg' | 'json'
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const paramsFileInput = ref<HTMLInputElement | null>(null)
@@ -51,8 +51,6 @@ const invertOutput = ref(false)             // 最终反色
 const threshold = ref(128)                  // 二值化阈值（用于点集提取）
 
 let pendingTimer: number | null = null
-let cancelPointAnimation: (() => void) | null = null
-onBeforeUnmount(() => cancelPointAnimation?.())
 
 const canProcess = computed(() => Boolean(imageElement.value) && !processing.value)
 
@@ -68,7 +66,7 @@ const paramsFileName = computed(() => {
 
 const storageKey = 'p2line-ps-params'
 const pointOrderOptions: PointOrder[] = ['scan', 'trace', 'contour', 'point-stroke']
-const outputFormatOptions: OutputFormat[] = ['png', 'jpg', 'svg', 'json', 'point-stroke']
+const outputFormatOptions: OutputFormat[] = ['png', 'jpg', 'svg', 'json']
 
 const controlState = computed(() => ({
   filterRadius: filterRadius.value,
