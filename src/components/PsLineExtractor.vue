@@ -710,7 +710,7 @@ watch(
         <div class="panel-heading">
           <div>
             <p class="eyebrow">POINT CLOUD</p>
-            <h2>点集可视化</h2>
+            <h2>{{ outputFormat === 'strokes' ? '有序笔画预览' : '点集可视化' }}</h2>
           </div>
           <span class="point-count">{{ pointCount.toLocaleString() }} <small>points</small></span>
         </div>
@@ -719,7 +719,7 @@ watch(
           <div v-if="!imageElement" class="point-empty">上传图片后在此查看点集分布</div>
         </div>
         <div class="point-visual-footer">
-          <span>原点 (0, 0) · 裁剪区域坐标</span>
+          <span>{{ outputFormat === 'strokes' ? '按笔画顺序分色 · 绿起点 / 红终点 · 不跨笔画连线' : '原点 (0, 0) · 裁剪区域坐标' }}</span>
           <label class="inline-toggle"><input v-model="showPointOrder" type="checkbox" /> 标记点集首尾</label>
         </div>
         <p v-if="showPointOrder && pointOrder === 'scan'" class="hint">为避免把扁平点集误画成连续笔画，这里只标记点序列的首尾，不连接采样点。</p>
