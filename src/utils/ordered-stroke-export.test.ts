@@ -35,6 +35,27 @@ describe('buildOrderedStrokeExport', () => {
     }
   })
 
+
+  it('keeps disconnected line components as separate pen-down strokes', () => {
+    const width = 12
+    const height = 8
+    const mask = new Uint8Array(width * height)
+    for (let x = 1; x <= 4; x++) mask[2 * width + x] = 1
+    for (let x = 7; x <= 10; x++) mask[5 * width + x] = 1
+
+    const result = buildOrderedStrokeExport(
+      mask,
+      width,
+      height,
+      { x: 0, y: 0, w: width, h: height },
+      1
+    )
+    const parsed = JSON.parse(result.json)
+    expect(parsed.strokes.length).toBe(2)
+    expect(parsed.strokes[0].length).toBeGreaterThanOrEqual(2)
+    expect(parsed.strokes[1].length).toBeGreaterThanOrEqual(2)
+  })
+
   it('returns an empty, valid stroke collection for an empty mask', () => {
     const result = buildOrderedStrokeExport(
       new Uint8Array(25),
