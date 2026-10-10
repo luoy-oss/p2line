@@ -15,7 +15,7 @@ import {
   dataUrlToBlob,
   type PointOrder
 } from '../utils/image-processing'
-import { buildOrderedStrokeExport } from '../utils/ordered-stroke-export'
+import { buildOrderedStrokeExportInWorker } from '../utils/ordered-stroke-worker'
 import type { StrokeDirectionStrategy } from '../utils/stroke-reconstruction'
 
 type OutputFormat = 'png' | 'jpg' | 'svg' | 'json' | 'strokes'
@@ -27,6 +27,8 @@ const outputCanvas = ref<HTMLCanvasElement | null>(null)
 const imageElement = ref<HTMLImageElement | null>(null)
 const imageName = ref('')
 const processing = ref(false)
+const processingProgress = ref(0)
+const processingStage = ref('准备中')
 const statusText = ref('请上传一张图片')
 const outputFormat = ref<OutputFormat>('png')
 const outputUrl = ref('')
@@ -150,7 +152,7 @@ function buildParamsPayload() {
     mergePointsEnabled: mergePointsEnabled.value,
     mergeDistance: mergeDistance.value,
     outputFormat: outputFormat.value,
-  strokeDirection: strokeDirection.value,
+    strokeDirection: strokeDirection.value,
     autoProcess: autoProcess.value
   }
 }
@@ -330,6 +332,10 @@ async function processImage() {
     return
   }
   processing.value = true
+  processingProgress.value = 0
+  processingStage.value = '准备线稿'
+  // Let Vue paint the progress UI before CPU-heavy preprocessing begins.
+  await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
   try {
     statusText.value = '正在生成线稿...'
     const width = imageElement.value.naturalWidth
@@ -392,7 +398,18 @@ async function processImage() {
       invertColors.value,
       rect
     )
-    const orderedStrokeExport = outputFormat.value === 'strokes' ? buildOrderedStrokeExport(thickEdgeMap, width, height, rect, pointStep.value, strokeDirection.value) : null
+    let orderedStrokeExport: Awaited<ReturnType<typeof buildOrderedStrokeExportInWorker>> | null = null
+    if (outputFormat.value === 'strokes') {
+      processingStage.value = '启动笔画计算线程'
+      processingProgress.value = 0.02
+      orderedStrokeExport = await buildOrderedStrokeExportInWorker(
+        thickEdgeMap.slice(), width, height, rect, pointStep.value, strokeDirection.value,
+        ({ progress, stage }) => {
+          processingProgress.value = Math.max(processingProgress.value, progress)
+          processingStage.value = stage
+        }
+      )
+    }
     const pointList = buildPointList(
       thickEdgeMap,
       width,
@@ -423,8 +440,12 @@ async function processImage() {
       renderPointsPreview(mergedPoints, rect, invertColors.value)
       statusText.value = '完成：已生成线稿'
     }
+  } catch (error) {
+    statusText.value = '笔画计算失败：' + (error instanceof Error ? error.message : String(error))
   } finally {
     processing.value = false
+    processingProgress.value = 0
+    processingStage.value = '准备中'
   }
 }
 
@@ -459,7 +480,10 @@ function renderOrderedStrokesPreview(strokes: Array<Array<{ x: number; y: number
     ctx.moveTo(stroke[0].x * scale, stroke[0].y * scale)
     for (let i = 1; i < stroke.length; i++) ctx.lineTo(stroke[i].x * scale, stroke[i].y * scale)
     ctx.stroke()
-    for (const point of stroke) {
+    // Preserve the complete trajectory while sampling decorative markers.
+    const markerStride = Math.max(1, Math.ceil(stroke.length / 250))
+    for (let i = 0; i < stroke.length; i += markerStride) {
+      const point = stroke[i]
       ctx.beginPath()
       ctx.arc(point.x * scale, point.y * scale, radius, 0, Math.PI * 2)
       ctx.fill()
@@ -670,6 +694,11 @@ watch(
 
       <div class="panel">
         <h2>{{ outputFormat === 'strokes' ? '有序笔画预览' : '点集预览' }}</h2>
+        <div v-if="processing && outputFormat === 'strokes'" class="stroke-progress" role="status" aria-live="polite">
+          <div class="stroke-progress-meta"><span>{{ processingStage }}</span><strong>{{ Math.round(processingProgress * 100) }}%</strong></div>
+          <progress :value="processingProgress" max="1"></progress>
+          <small>笔画重建在后台线程运行，页面仍可响应操作</small>
+        </div>
         <div class="preview">
           <canvas ref="pointsPreviewCanvas"></canvas>
         </div>
@@ -688,3 +717,8 @@ watch(
     </section>
   </div>
 </template>
+.stroke-progress { display: grid; gap: 8px; padding: 12px 14px; margin-bottom: 12px; border: 1px solid var(--border-color, #d7dce2); border-radius: 10px; background: var(--panel-bg, rgba(127,127,127,.04)); }
+.stroke-progress-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
+.stroke-progress progress { display: block; width: 100%; height: 7px; accent-color: #0d9488; }
+.stroke-progress small { opacity: .7; }
+

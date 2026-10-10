@@ -26,6 +26,8 @@ export interface StrokeReconstructionOptions {
   /** Use 8-connected pixels; diagonal shortcuts are suppressed when an
    * orthogonal connection already exists. */
   diagonalConnectivity?: boolean
+  /** Progress callback used by workers; values are monotonic in [0, 1]. */
+  onProgress?: (progress: number, stage: string) => void
 }
 
 export interface StrokeReconstructionResult {
@@ -70,7 +72,8 @@ export function thinBinaryMask(
   width: number,
   height: number,
   rect: Rect,
-  maxIterations = 80
+  maxIterations = 80,
+  onIteration?: (iteration: number, maxIterations: number) => void
 ): Uint8Array {
   if (width <= 0 || height <= 0 || input.length !== width * height) {
     throw new Error('Invalid mask dimensions')
@@ -116,6 +119,7 @@ export function thinBinaryMask(
         for (const idx of marks) mask[idx] = 0
       }
     }
+    onIteration?.(iteration + 1, maxIterations)
     if (!changed) break
   }
   return mask
@@ -307,7 +311,8 @@ export function traceSkeletonPaths(
   width: number,
   height: number,
   rect: Rect,
-  diagonalConnectivity = false
+  diagonalConnectivity = false,
+  onProgress?: (progress: number) => void
 ): { paths: StrokePoint[][]; endpoints: number; junctionPixels: number; closedLoops: number } {
   const neighbors = new Map<number, number[]>()
   let endpoints = 0, junctionPixels = 0
@@ -320,6 +325,7 @@ export function traceSkeletonPaths(
       if (list.length === 1) endpoints++
       if (list.length >= 3) junctionPixels++
     }
+    if ((y - rect.y) % 32 === 0) onProgress?.((y - rect.y) / rect.h)
   }
 
   const visitedEdges = new Set<string>()
@@ -395,11 +401,19 @@ export function reconstructStrokePaths(
     }
   }
 
-  const skeleton = thinBinaryMask(edge, width, height, rect, options.maxThinningIterations ?? 80)
+  options.onProgress?.(0.02, '准备骨架')
+  const maxIterations = options.maxThinningIterations ?? 80
+  const skeleton = thinBinaryMask(edge, width, height, rect, maxIterations, (iteration, total) => {
+    options.onProgress?.(0.04 + 0.58 * iteration / total, '骨架细化')
+  })
   let skeletonPixels = 0
   for (const value of skeleton) skeletonPixels += value ? 1 : 0
 
-  const traced = traceSkeletonPaths(skeleton, width, height, rect, options.diagonalConnectivity ?? false)
+  options.onProgress?.(0.64, '提取路径拓扑')
+  const traced = traceSkeletonPaths(skeleton, width, height, rect, options.diagonalConnectivity ?? false, progress => {
+    options.onProgress?.(0.64 + 0.16 * progress, '提取路径拓扑')
+  })
+  options.onProgress?.(0.82, '简化与重采样')
   const minLength = Math.max(0, options.minPathLength ?? 3)
   const simplified = traced.paths
     .filter(path => pathLength(path) >= minLength)
@@ -409,7 +423,9 @@ export function reconstructStrokePaths(
     })
     .filter(path => path.length >= 2)
 
+  options.onProgress?.(0.94, '笔画排序')
   const strokes = orderStrokePaths(simplified, options.directionStrategy ?? 'natural')
+  options.onProgress?.(1, '完成')
   return {
     strokes,
     diagnostics: {
