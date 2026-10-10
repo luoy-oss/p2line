@@ -324,7 +324,7 @@ function renderPointsPreview(
  * 5. 膨胀加粗线条
  * 6. 生成输出图像、SVG 和点集
  */
-async async function processImage() {
+async function processImage() {
   if (!imageElement.value || !sourceCanvas.value || !outputCanvas.value) {
     return
   }
