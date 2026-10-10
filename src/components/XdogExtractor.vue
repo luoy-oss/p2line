@@ -639,11 +639,11 @@ watch(
       </div>
 
       <div class="panel">
-        <h2>点集预览</h2>
+        <h2>{{ outputFormat === 'strokes' ? '有序笔画预览' : '点集预览' }}</h2>
         <div class="preview">
           <canvas ref="pointsPreviewCanvas"></canvas>
         </div>
-        <div class="hint">点集以裁剪区域左上角为 (0, 0)</div>
+        <div class="hint">{{ outputFormat === 'strokes' ? '按笔画顺序分色；绿色为起点、红色为终点，笔画之间不连接。坐标原点为裁剪区域左上角。' : '点集以裁剪区域左上角为 (0, 0)' }}</div>
       </div>
 
       <div class="panel">
