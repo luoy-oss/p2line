@@ -44,6 +44,9 @@ const cropHeight = ref(100)     // 裁剪区域高度
 const pointsPreviewCanvas = ref<HTMLCanvasElement | null>(null)
 const pointCount = ref(0)
 const showPointOrder = ref(false)
+let lastPreviewPoints: Array<{ x: number; y: number }> = []
+let lastPreviewRect = { x: 0, y: 0, w: 1, h: 1 }
+let lastPreviewInvert = false
 const pointOrder = ref<PointOrder>('scan')  // 点集导出顺序
 const mergePointsEnabled = ref(false)       // 是否合并点集
 const mergeDistance = ref(2)                // 合并距离
@@ -257,6 +260,9 @@ function renderPointsPreview(
   rect: { x: number; y: number; w: number; h: number },
   invert: boolean
 ) {
+  lastPreviewPoints = points
+  lastPreviewRect = { ...rect }
+  lastPreviewInvert = invert
   const canvas = pointsPreviewCanvas.value
   if (!canvas) return
   const maxSize = 1200
@@ -513,6 +519,12 @@ function downloadOutput() {
 }
 
 
+watch(showPointOrder, () => {
+  if (imageElement.value && lastPreviewPoints.length) {
+    renderPointsPreview(lastPreviewPoints, lastPreviewRect, lastPreviewInvert)
+  }
+})
+
 watch(
   () => outputFormat.value,
   () => {
@@ -655,7 +667,7 @@ watch(
         </div>
       </div>
 
-      <div class="panel point-visual-panel" :class="{ 'point-visual-panel--active': outputFormat === 'json' }">
+      <div v-show="outputFormat === 'json'" class="panel point-visual-panel" :class="{ 'point-visual-panel--active': outputFormat === 'json' }">
         <div class="panel-heading">
           <div>
             <p class="eyebrow">POINT CLOUD</p>
