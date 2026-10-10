@@ -19,7 +19,7 @@ describe('buildOrderedStrokeExport', () => {
     const parsed = JSON.parse(result.json)
     expect(parsed.version).toBe(2)
     expect(parsed.coordinateSystem).toBe('crop-local')
-    expect(parsed.ordering).toBe('heuristic-minimum-pen-up-travel')
+    expect(parsed.ordering).toBe('natural-direction-minimum-pen-up-travel')
     expect(Array.isArray(parsed.strokes)).toBe(true)
     expect(result.pointCount).toBe(parsed.strokes.reduce(
       (sum: number, stroke: Array<{ x: number; y: number }>) => sum + stroke.length,
