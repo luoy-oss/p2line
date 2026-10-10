@@ -352,7 +352,7 @@ function renderPointsPreview(
  * 6. 可选：反色输出
  * 7. 生成点集
  */
-async async function processImage() {
+async function processImage() {
   if (!imageElement.value || !sourceCanvas.value || !outputCanvas.value) {
     return
   }
