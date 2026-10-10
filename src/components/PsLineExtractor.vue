@@ -501,6 +501,13 @@ function renderOrderedStrokesPreview(strokes: Array<Array<{ x: number; y: number
   if (!ctx) return
   ctx.fillStyle = invert ? '#111827' : '#ffffff'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
+  const gridStep = Math.max(24, Math.round(Math.min(canvas.width, canvas.height) / 12 / 8) * 8)
+  ctx.strokeStyle = invert ? 'rgba(148,163,184,0.12)' : 'rgba(100,116,139,0.12)'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  for (let x = 0; x <= canvas.width; x += gridStep) { ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, canvas.height) }
+  for (let y = 0; y <= canvas.height; y += gridStep) { ctx.moveTo(0, y + 0.5); ctx.lineTo(canvas.width, y + 0.5) }
+  ctx.stroke()
   const palette = ['#2563eb', '#0d9488', '#d97706', '#7c3aed', '#db2777', '#0891b2', '#65a30d', '#ea580c']
   const radius = Math.max(1.2, Math.min(3.5, scale * 0.75))
   strokes.forEach((stroke, index) => {
@@ -508,7 +515,7 @@ function renderOrderedStrokesPreview(strokes: Array<Array<{ x: number; y: number
     const color = palette[index % palette.length]
     ctx.strokeStyle = color
     ctx.fillStyle = color
-    ctx.lineWidth = Math.max(1, scale * 0.7)
+    ctx.lineWidth = Math.max(1, Math.min(2.5, scale * 0.7))
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
     ctx.beginPath()
