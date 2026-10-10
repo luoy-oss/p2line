@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { reconstructStrokePaths } from '../utils/stroke-reconstruction'
+import { orderPointCloudByStrokes } from '../utils/stroke-point-order'
 import {
   createGrayBuffer,
   createXdogStrength,
@@ -16,7 +18,7 @@ import {
   type PointOrder
 } from '../utils/image-processing'
 
-type OutputFormat = 'png' | 'jpg' | 'svg' | 'json'
+type OutputFormat = 'png' | 'jpg' | 'svg' | 'json' | 'point-stroke'
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const paramsFileInput = ref<HTMLInputElement | null>(null)
@@ -54,12 +56,14 @@ const mergePointsEnabled = ref(false) // 是否合并点集
 const mergeDistance = ref(2) // 合并距离
 
 let pendingTimer: number | null = null
+let cancelPointAnimation: (() => void) | null = null
+onBeforeUnmount(() => cancelPointAnimation?.())
 
 const canProcess = computed(() => Boolean(imageElement.value) && !processing.value)
 
 const outputFileName = computed(() => {
   const base = imageName.value ? imageName.value.replace(/\.[^.]+$/, '') : 'outline'
-  return `${base}.${outputFormat.value}`
+  return pointOrder.value === 'point-stroke' ? `${base}-point-stroke-order.json` : `${base}.${outputFormat.value}`
 })
 
 const paramsFileName = computed(() => {
@@ -68,8 +72,8 @@ const paramsFileName = computed(() => {
 })
 
 const storageKey = 'p2line-params'
-const pointOrderOptions: PointOrder[] = ['scan', 'trace', 'contour']
-const outputFormatOptions: OutputFormat[] = ['png', 'jpg', 'svg', 'json']
+const pointOrderOptions: PointOrder[] = ['scan', 'trace', 'contour', 'point-stroke']
+const outputFormatOptions: OutputFormat[] = ['png', 'jpg', 'svg', 'json', 'point-stroke']
 
 const controlState = computed(() => ({
   lineThickness: lineThickness.value,
@@ -386,7 +390,10 @@ async function processImage() {
     const mergedPoints = mergePointsEnabled.value
       ? applyPointMerge(pointList, mergeDistance.value)
       : pointList
-    const jsonText = JSON.stringify(mergedPoints)
+    const orderedPoints = pointOrder.value === 'point-stroke'
+      ? orderPointCloudByStrokes(mergedPoints, reconstructStrokePaths(thickEdgeMap, width, height, rect).strokes)
+      : mergedPoints
+    const jsonText = JSON.stringify(orderedPoints)
     outputText.value = outputFormat.value === 'json' ? jsonText : outputFormat.value === 'svg' ? svgText : ''
     if (outputFormat.value === 'png') {
       outputUrl.value = pngUrl
@@ -562,6 +569,7 @@ watch(
               <option value="scan">顺序（从 0,0 到末尾）</option>
               <option value="trace">路径化绘制</option>
               <option value="contour">轮廓绘制</option>
+              <option value="point-stroke">笔画顺序模拟</option>
             </select>
           </label>
           <label class="toggle">
