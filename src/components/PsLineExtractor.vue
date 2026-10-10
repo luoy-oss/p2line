@@ -44,6 +44,11 @@ const cropY = ref(0)            // 裁剪区域 Y
 const cropWidth = ref(100)      // 裁剪区域宽度
 const cropHeight = ref(100)     // 裁剪区域高度
 const pointsPreviewCanvas = ref<HTMLCanvasElement | null>(null)
+const pointCount = ref(0)
+const showPointOrder = ref(false)
+let lastPreviewPoints: Array<{ x: number; y: number }> = []
+let lastPreviewRect = { x: 0, y: 0, w: 1, h: 1 }
+let lastPreviewInvert = false
 const pointOrder = ref<PointOrder>('scan')  // 点集导出顺序
 const mergePointsEnabled = ref(false)       // 是否合并点集
 const mergeDistance = ref(2)                // 合并距离
@@ -257,30 +262,68 @@ function renderPointsPreview(
   rect: { x: number; y: number; w: number; h: number },
   invert: boolean
 ) {
-  if (!pointsPreviewCanvas.value) {
-    return
-  }
-  const maxSize = 280
-  const scale = Math.min(maxSize / rect.w, maxSize / rect.h)
+  lastPreviewPoints = points
+  lastPreviewRect = { ...rect }
+  lastPreviewInvert = invert
+  const canvas = pointsPreviewCanvas.value
+  if (!canvas) return
+  const maxSize = 1200
+  const scale = Math.min(maxSize / Math.max(1, rect.w), maxSize / Math.max(1, rect.h))
   const canvasWidth = Math.max(1, Math.round(rect.w * scale))
   const canvasHeight = Math.max(1, Math.round(rect.h * scale))
-  const ctx = pointsPreviewCanvas.value.getContext('2d')
-  if (!ctx) {
-    return
-  }
-  pointsPreviewCanvas.value.width = canvasWidth
-  pointsPreviewCanvas.value.height = canvasHeight
-  ctx.fillStyle = invert ? '#0f172a' : '#ffffff'
-  ctx.fillRect(0, 0, canvasWidth, canvasHeight)
-  ctx.fillStyle = invert ? '#ffffff' : '#0f172a'
-  const dot = Math.max(1, Math.round(scale))
-  for (const point of points) {
-    const px = Math.round(point.x * scale)
-    const py = Math.round(point.y * scale)
-    ctx.fillRect(px, py, dot, dot)
-  }
-}
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
 
+  canvas.width = canvasWidth
+  canvas.height = canvasHeight
+  ctx.fillStyle = invert ? '#111827' : '#ffffff'
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight)
+
+  // Subtle coordinate grid helps judge point density and spacing.
+  const gridStep = Math.max(24, Math.round(Math.min(canvasWidth, canvasHeight) / 12 / 8) * 8)
+  ctx.strokeStyle = invert ? 'rgba(148,163,184,0.12)' : 'rgba(100,116,139,0.12)'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  for (let x = 0; x <= canvasWidth; x += gridStep) {
+    ctx.moveTo(x + 0.5, 0)
+    ctx.lineTo(x + 0.5, canvasHeight)
+  }
+  for (let y = 0; y <= canvasHeight; y += gridStep) {
+    ctx.moveTo(0, y + 0.5)
+    ctx.lineTo(canvasWidth, y + 0.5)
+  }
+  ctx.stroke()
+
+  // The exported format is a flat point array; it does not preserve path
+  // boundaries, so do not connect adjacent points and imply false strokes.
+
+  const radius = Math.max(1.2, Math.min(3.4, scale * 0.7))
+  ctx.fillStyle = invert ? '#e2e8f0' : '#172033'
+  for (const point of points) {
+    ctx.beginPath()
+    ctx.arc(point.x * scale, point.y * scale, radius, 0, Math.PI * 2)
+    ctx.fill()
+  }
+
+  if (showPointOrder.value && points.length > 0) {
+    const markerRadius = Math.max(3, Math.min(7, scale * 2))
+    const markers = [
+      { point: points[0], label: 'START', color: '#16a34a' },
+      { point: points[points.length - 1], label: 'END', color: '#dc2626' }
+    ]
+    ctx.font = '600 11px system-ui, sans-serif'
+    for (const marker of markers) {
+      const x = marker.point.x * scale, y = marker.point.y * scale
+      ctx.fillStyle = marker.color
+      ctx.beginPath()
+      ctx.arc(x, y, markerRadius, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.fillStyle = marker.color
+      ctx.fillText(marker.label, x + markerRadius + 3, y - markerRadius - 2)
+    }
+  }
+  pointCount.value = points.length
+}
 
 /**
  * PS 风格线稿提取流程
@@ -469,6 +512,12 @@ function downloadOutput() {
 }
 
 
+watch(showPointOrder, () => {
+  if (imageElement.value && lastPreviewPoints.length) {
+    renderPointsPreview(lastPreviewPoints, lastPreviewRect, lastPreviewInvert)
+  }
+})
+
 watch(
   () => outputFormat.value,
   () => {
@@ -497,8 +546,8 @@ watch(
 </script>
 
 <template>
-  <div class="extractor-container">
-    <div class="actions-bar">
+  <div class="extractor-container ps-workspace">
+    <div class="actions-bar ps-actions-bar">
       <button class="primary" type="button" @click="requestFile">上传图片</button>
       <button type="button" @click="saveParams">保存参数</button>
       <button type="button" @click="loadParams">载入参数</button>
@@ -507,9 +556,9 @@ watch(
       <button type="button" :disabled="!outputText && !outputUrl" @click="downloadOutput">下载输出</button>
     </div>
 
-    <section class="workspace">
+    <section class="workspace ps-workspace-grid" :class="{ 'is-point-output': outputFormat === 'json' }">
       <div class="panel">
-        <h2>输入</h2>
+        <div class="panel-heading"><div><p class="eyebrow">SOURCE</p><h2>输入图像</h2></div></div>
         <div class="uploader" @click="requestFile">
           <input ref="fileInput" type="file" accept="image/*" @change="handleFileChange" />
           <div v-if="!imageElement" class="empty">点击或拖拽图片到此处</div>
@@ -527,7 +576,7 @@ watch(
       </div>
 
       <div class="panel">
-        <h2>PS 流程控制</h2>
+        <div class="panel-heading"><div><p class="eyebrow">ADJUSTMENTS</p><h2>提取参数</h2></div></div>
         <div class="controls">
           <label>
             最小值滤镜半径：{{ filterRadius }}
@@ -550,7 +599,7 @@ watch(
             输出反色 (白线黑底)
           </label>
           
-          <h3>点集提取设置</h3>
+          <h3 class="section-label">点集提取设置</h3>
            <label>
             提取阈值：{{ threshold }}
             <input v-model.number="threshold" type="range" min="1" max="254" step="1" />
@@ -606,29 +655,103 @@ watch(
               <option value="png">PNG</option>
               <option value="jpg">JPG</option>
               <option value="svg">SVG</option>
-              <option value="json">点集 JSON</option>
+              <option value="json">点集 / 坐标 JSON</option>
             </select>
           </label>
         </div>
       </div>
 
-      <div class="panel">
-        <h2>点集预览</h2>
-        <div class="preview">
-          <canvas ref="pointsPreviewCanvas"></canvas>
+      <div v-show="outputFormat === 'json'" class="panel point-visual-panel" :class="{ 'point-visual-panel--active': outputFormat === 'json' }">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">POINT CLOUD</p>
+            <h2>点集可视化</h2>
+          </div>
+          <span class="point-count">{{ pointCount.toLocaleString() }} <small>points</small></span>
         </div>
-        <div class="hint">点集以裁剪区域左上角为 (0, 0)</div>
+        <div class="point-stage" :class="{ 'point-stage--dark': invertOutput }">
+          <canvas ref="pointsPreviewCanvas"></canvas>
+          <div v-if="!imageElement" class="point-empty">上传图片后在此查看点集分布</div>
+        </div>
+        <div class="point-visual-footer">
+          <span>原点 (0, 0) · 裁剪区域坐标</span>
+          <label class="inline-toggle"><input v-model="showPointOrder" type="checkbox" /> 标记点集首尾</label>
+        </div>
+        <p v-if="showPointOrder && pointOrder === 'scan'" class="hint">为避免把扁平点集误画成连续笔画，这里只标记点序列的首尾，不连接采样点。</p>
+        <div class="point-legend"><span><i class="legend-dot"></i> 采样点</span><span><i class="legend-start"></i> 序列起点</span><span><i class="legend-end"></i> 序列终点</span></div>
       </div>
 
-      <div class="panel">
-        <h2>输出</h2>
-        <div class="preview">
+      <div class="panel output-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">EXPORT</p>
+            <h2>{{ outputFormat === 'json' ? '点集数据' : '线稿输出' }}</h2>
+          </div>
+          <span class="format-pill">{{ outputFormat.toUpperCase() }}</span>
+        </div>
+        <div class="preview output-preview">
           <img v-if="outputUrl" :src="outputUrl" alt="output" />
-          <textarea v-else v-model="outputText" readonly></textarea>
+          <textarea v-else v-model="outputText" readonly :placeholder="outputFormat === 'json' ? '生成后的坐标点 JSON 将显示在这里' : '当前格式没有文本预览'"></textarea>
         </div>
         <canvas ref="outputCanvas" class="hidden"></canvas>
-        <div class="hint">提示：SVG 与点集建议调高采样间隔降低体积</div>
+        <div class="hint">点集 JSON 保留为坐标数组；PNG / JPG / SVG 为线稿输出。</div>
       </div>
     </section>
   </div>
 </template>
+
+
+<style scoped>
+.ps-workspace { --ink: #172033; --muted: #718096; --line: #e5eaf1; --accent: #356df3; color: var(--ink); }
+.ps-actions-bar { gap: 9px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: rgba(255,255,255,.88); box-shadow: 0 8px 30px rgba(25,42,70,.04); }
+.ps-actions-bar button { border-radius: 9px; padding: 9px 14px; font-weight: 600; }
+.ps-actions-bar button.primary { background: #285eea; border-color: #285eea; }
+.ps-workspace-grid { grid-template-columns: minmax(230px, .9fr) minmax(280px, 1fr); align-items: stretch; gap: 16px; }
+.ps-workspace-grid .panel { border: 1px solid var(--line); border-radius: 16px; padding: 18px; box-shadow: 0 8px 28px rgba(25,42,70,.045); min-width: 0; gap: 15px; }
+.ps-workspace-grid .panel h2 { border: 0; padding: 0; color: #172033; font-size: 17px; letter-spacing: -.02em; }
+.panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.eyebrow { margin: 0 0 4px; color: #8b96a9; font-size: 10px; letter-spacing: .14em; font-weight: 800; }
+.section-label { margin: 7px 0 0 !important; padding-top: 14px; border-top: 1px solid #edf0f5; font-size: 12px !important; letter-spacing: .06em; text-transform: uppercase; }
+.ps-workspace-grid .controls { gap: 13px; max-height: none; overflow: visible; }
+.ps-workspace-grid .controls label { font-size: 12px; font-weight: 600; color: #475569; gap: 8px; }
+.ps-workspace-grid .controls input[type=range] { accent-color: #356df3; }
+.ps-workspace-grid .controls select { border-color: #dce3ed; border-radius: 9px; padding: 10px 11px; color: #253248; }
+.ps-workspace-grid .controls .toggle { display: flex; align-items: center; gap: 9px; }
+.ps-workspace-grid .uploader { min-height: 300px; border-radius: 12px; border-color: #dbe3ee; background: linear-gradient(145deg,#f8fafc,#f1f5f9); }
+.ps-workspace-grid .status { border-radius: 8px; line-height: 1.5; }
+.point-visual-panel { grid-column: 1 / -1; }
+.point-visual-panel--active { border-color: #cbd8ff !important; box-shadow: 0 10px 34px rgba(53,109,243,.08) !important; }
+.point-count { padding: 7px 11px; border-radius: 9px; background: #f1f5ff; color: #285eea; font-weight: 800; font-size: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.point-count small { font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+.point-stage { min-height: 280px; max-height: 68vh; overflow: auto; position: relative; display: flex; align-items: center; justify-content: center; padding: 12px; border-radius: 12px; border: 1px solid #e4e9f1; background-color: #fbfcfe; background-image: radial-gradient(#dbe2ed .8px, transparent .8px); background-size: 16px 16px; }
+.point-stage--dark { background-color: #111827; background-image: radial-gradient(#334155 .8px, transparent .8px); border-color: #273449; }
+.point-stage canvas { display: block; width: 100%; height: auto; max-height: 64vh; object-fit: contain; image-rendering: auto; }
+.point-empty { position: absolute; color: #94a3b8; font-size: 13px; pointer-events: none; }
+.point-visual-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; color: #8390a3; font-size: 11px; }
+.inline-toggle { display: inline-flex; align-items: center; gap: 7px; color: #475569; cursor: pointer; }
+.inline-toggle input { accent-color: #356df3; }
+.point-legend { display: flex; flex-wrap: wrap; gap: 16px; color: #68758a; font-size: 11px; }
+.point-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.point-legend i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #172033; }
+.point-legend .legend-start { background: #16a34a; }
+.point-legend .legend-end { background: #dc2626; }
+.point-stage--dark + .point-visual-footer { color: #94a3b8; }
+.point-stage--dark ~ .point-legend { color: #cbd5e1; }
+.point-stage--dark ~ .point-legend .legend-dot { background: #e2e8f0; }
+.format-pill { border: 1px solid #dce5f4; background: #f5f8ff; color: #3561c7; border-radius: 7px; padding: 5px 8px; font-size: 10px; font-weight: 800; letter-spacing: .08em; }
+.output-preview { min-height: 280px; border-radius: 10px; border-color: #e3e8f0; background: #f8fafc; }
+.output-preview textarea { min-height: 260px; outline: none; font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.ps-workspace .hint { color: #8793a6; font-size: 11px; line-height: 1.6; text-align: left; }
+@media (min-width: 1100px) {
+  .ps-workspace-grid.is-point-output { grid-template-columns: minmax(260px, .72fr) minmax(0, 1.8fr); }
+  .ps-workspace-grid.is-point-output .point-visual-panel { grid-column: 2; grid-row: 1 / span 2; }
+  .ps-workspace-grid.is-point-output .output-panel { grid-column: 1; }
+  .ps-workspace-grid.is-point-output .point-stage { min-height: 440px; }
+}
+@media (max-width: 760px) {
+  .ps-workspace-grid { grid-template-columns: minmax(0,1fr); }
+  .ps-workspace-grid .panel { padding: 14px; }
+  .ps-workspace-grid .uploader { min-height: 220px; }
+  .point-stage { min-height: 220px; }
+}
+</style>
