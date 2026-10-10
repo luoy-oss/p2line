@@ -199,39 +199,73 @@ function pathLength(path: StrokePoint[]): number {
   return total
 }
 
-/** Greedy pen-up travel minimization; not a claim about original authoring order. */
-export function orderStrokePaths(paths: StrokePoint[][]): StrokePoint[][] {
-  const remaining = paths.filter(path => path.length >= 2).map(path => path.slice())
-  if (!remaining.length) return []
-  // Stable initial choice: upper-left endpoint of the upper-left path.
-  let firstIndex = 0
-  let firstScore = Infinity
-  let firstReverse = false
-  for (let i = 0; i < remaining.length; i++) {
-    for (const reverse of [false, true]) {
-      const p = reverse ? remaining[i][remaining[i].length - 1] : remaining[i][0]
-      const score = p.y * 1_000_000 + p.x
-      if (score < firstScore) { firstScore = score; firstIndex = i; firstReverse = reverse }
-    }
+/**
+ * Pick a conventional direction for an open stroke.
+ *
+ * Dominantly vertical strokes run top-to-bottom; dominantly horizontal strokes
+ * run left-to-right. Diagonal strokes use the top-most endpoint, with x as a
+ * tie-breaker. Closed loops have no meaningful start/end, so keep their traced
+ * direction rather than introducing an arbitrary reversal.
+ */
+export function orientStrokeDirection(path: StrokePoint[]): StrokePoint[] {
+  if (path.length < 2) return path.slice()
+  const first = path[0]
+  const last = path[path.length - 1]
+  const dx = Math.abs(last.x - first.x)
+  const dy = Math.abs(last.y - first.y)
+
+  // A traced loop may end next to its starting pixel without repeating it.
+  if (Math.hypot(last.x - first.x, last.y - first.y) <= 1.5) return path.slice()
+
+  let shouldReverse = false
+  if (dy > dx * 1.15) {
+    shouldReverse = last.y < first.y
+  } else if (dx > dy * 1.15) {
+    shouldReverse = last.x < first.x
+  } else {
+    shouldReverse = last.y < first.y ||
+      (last.y === first.y && last.x < first.x)
   }
-  const first = remaining.splice(firstIndex, 1)[0]
-  if (firstReverse) first.reverse()
-  const ordered = [first]
+
+  return shouldReverse ? path.slice().reverse() : path.slice()
+}
+
+/**
+ * Canonicalize individual stroke directions first, then greedily reduce pen-up
+ * travel by choosing the next stroke whose *start* is nearest. Unlike the
+ * previous implementation, this never reverses a stroke just to save travel,
+ * which caused conspicuous bottom-to-top / right-to-left "reverse strokes".
+ *
+ * This is a drawing convention heuristic, not recovery of the original author's
+ * true stroke order. For handwriting, language-specific stroke-order models
+ * would be needed.
+ */
+export function orderStrokePaths(paths: StrokePoint[][]): StrokePoint[][] {
+  const remaining = paths
+    .filter(path => path.length >= 2)
+    .map(path => orientStrokeDirection(path))
+  if (!remaining.length) return []
+
+  // Begin at the stroke with the upper-left-most canonical start point.
+  remaining.sort((a, b) => {
+    const pa = a[0], pb = b[0]
+    return pa.y - pb.y || pa.x - pb.x
+  })
+  const ordered: StrokePoint[][] = [remaining.shift()!]
 
   while (remaining.length) {
     const end = ordered[ordered.length - 1][ordered[ordered.length - 1].length - 1]
-    let bestIndex = 0, bestReverse = false, bestCost = Infinity
+    let bestIndex = 0
+    let bestCost = Infinity
     for (let i = 0; i < remaining.length; i++) {
-      const path = remaining[i]
-      const start = path[0], finish = path[path.length - 1]
-      const a = (end.x - start.x) ** 2 + (end.y - start.y) ** 2
-      const b = (end.x - finish.x) ** 2 + (end.y - finish.y) ** 2
-      if (a < bestCost) { bestCost = a; bestIndex = i; bestReverse = false }
-      if (b < bestCost) { bestCost = b; bestIndex = i; bestReverse = true }
+      const start = remaining[i][0]
+      const cost = (end.x - start.x) ** 2 + (end.y - start.y) ** 2
+      if (cost < bestCost) {
+        bestCost = cost
+        bestIndex = i
+      }
     }
-    const next = remaining.splice(bestIndex, 1)[0]
-    if (bestReverse) next.reverse()
-    ordered.push(next)
+    ordered.push(remaining.splice(bestIndex, 1)[0])
   }
   return ordered
 }
@@ -369,7 +403,7 @@ export function serializeStrokePaths(strokes: StrokePoint[][]): string {
   return JSON.stringify({
     version: 2,
     coordinateSystem: 'crop-local',
-    ordering: 'heuristic-minimum-pen-up-travel',
+    ordering: 'natural-direction-minimum-pen-up-travel',
     strokes
   }, null, 2)
 }
