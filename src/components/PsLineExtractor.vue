@@ -292,20 +292,8 @@ function renderPointsPreview(
   }
   ctx.stroke()
 
-  // Draw a faint traversal line only for path/contour ordering. Scan order
-  // deliberately remains dots-only because connecting scan points is misleading.
-  if (showPointOrder.value && pointOrder.value !== 'scan' && points.length > 1) {
-    ctx.strokeStyle = invert ? 'rgba(96,165,250,0.55)' : 'rgba(37,99,235,0.35)'
-    ctx.lineWidth = Math.max(1, scale * 0.45)
-    ctx.beginPath()
-    points.forEach((point, index) => {
-      const x = point.x * scale
-      const y = point.y * scale
-      if (index === 0) ctx.moveTo(x, y)
-      else ctx.lineTo(x, y)
-    })
-    ctx.stroke()
-  }
+  // The exported format is a flat point array; it does not preserve path
+  // boundaries, so do not connect adjacent points and imply false strokes.
 
   const radius = Math.max(1.2, Math.min(3.4, scale * 0.7))
   ctx.fillStyle = invert ? '#e2e8f0' : '#172033'
@@ -681,10 +669,10 @@ watch(
         </div>
         <div class="point-visual-footer">
           <span>原点 (0, 0) · 裁剪区域坐标</span>
-          <label class="inline-toggle"><input v-model="showPointOrder" type="checkbox" /> 显示路径顺序</label>
+          <label class="inline-toggle"><input v-model="showPointOrder" type="checkbox" /> 标记点集首尾</label>
         </div>
-        <p v-if="showPointOrder && pointOrder === 'scan'" class="hint">扫描模式按行取点，不绘制跨行连线；起点和终点仅标记遍历序列首尾。</p>
-        <div class="point-legend"><span><i class="legend-dot"></i> 采样点</span><span><i class="legend-start"></i> 起点</span><span><i class="legend-end"></i> 终点</span></div>
+        <p v-if="showPointOrder && pointOrder === 'scan'" class="hint">为避免把扁平点集误画成连续笔画，这里只标记点序列的首尾，不连接采样点。</p>
+        <div class="point-legend"><span><i class="legend-dot"></i> 采样点</span><span><i class="legend-start"></i> 序列起点</span><span><i class="legend-end"></i> 序列终点</span></div>
       </div>
 
       <div class="panel output-panel">
