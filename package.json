@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit -p tsconfig.app.json && vite build",
+    "test": "vitest run",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -17,6 +18,7 @@
     "@vue/tsconfig": "^0.8.1",
     "typescript": "~5.4.5",
     "vite": "^5.4.21",
+    "vitest": "^1.6.1",
     "vue-tsc": "^1.8.27"
   }
 }
