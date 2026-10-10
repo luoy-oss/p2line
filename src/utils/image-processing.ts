@@ -1,4 +1,4 @@
-export type PointOrder = 'scan' | 'trace' | 'contour'
+export type PointOrder = 'scan' | 'trace' | 'contour' | 'point-stroke'
 
 /**
  * 将图像数据转换为灰度缓冲区
