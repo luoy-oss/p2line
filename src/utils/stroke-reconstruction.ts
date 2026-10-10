@@ -10,7 +10,11 @@ export interface StrokePoint {
   y: number
 }
 
+export type StrokeDirectionStrategy = 'natural' | 'shortest' | 'trace'
+
 export interface StrokeReconstructionOptions {
+  /** Direction/order policy for reconstructed paths. */
+  directionStrategy?: StrokeDirectionStrategy
   /** Zhang-Suen thinning iteration limit. */
   maxThinningIterations?: number
   /** Drop short branches shorter than this many pixels. Set 0 to keep all. */
@@ -22,6 +26,8 @@ export interface StrokeReconstructionOptions {
   /** Use 8-connected pixels; diagonal shortcuts are suppressed when an
    * orthogonal connection already exists. */
   diagonalConnectivity?: boolean
+  /** Progress callback used by workers; values are monotonic in [0, 1]. */
+  onProgress?: (progress: number, stage: string) => void
 }
 
 export interface StrokeReconstructionResult {
@@ -66,7 +72,8 @@ export function thinBinaryMask(
   width: number,
   height: number,
   rect: Rect,
-  maxIterations = 80
+  maxIterations = 80,
+  onIteration?: (iteration: number, maxIterations: number) => void
 ): Uint8Array {
   if (width <= 0 || height <= 0 || input.length !== width * height) {
     throw new Error('Invalid mask dimensions')
@@ -112,6 +119,7 @@ export function thinBinaryMask(
         for (const idx of marks) mask[idx] = 0
       }
     }
+    onIteration?.(iteration + 1, maxIterations)
     if (!changed) break
   }
   return mask
@@ -199,39 +207,95 @@ function pathLength(path: StrokePoint[]): number {
   return total
 }
 
-/** Greedy pen-up travel minimization; not a claim about original authoring order. */
-export function orderStrokePaths(paths: StrokePoint[][]): StrokePoint[][] {
+/**
+ * Pick a conventional direction for an open stroke.
+ *
+ * Dominantly vertical strokes run top-to-bottom; dominantly horizontal strokes
+ * run left-to-right. Diagonal strokes use the top-most endpoint, with x as a
+ * tie-breaker. Closed loops have no meaningful start/end, so keep their traced
+ * direction rather than introducing an arbitrary reversal.
+ */
+export function orientStrokeDirection(path: StrokePoint[]): StrokePoint[] {
+  if (path.length < 2) return path.slice()
+  const first = path[0]
+  const last = path[path.length - 1]
+  const dx = Math.abs(last.x - first.x)
+  const dy = Math.abs(last.y - first.y)
+
+  // A traced loop may end next to its starting pixel without repeating it.
+  if (Math.hypot(last.x - first.x, last.y - first.y) <= 1.5) return path.slice()
+
+  let shouldReverse = false
+  if (dy > dx * 1.15) {
+    shouldReverse = last.y < first.y
+  } else if (dx > dy * 1.15) {
+    shouldReverse = last.x < first.x
+  } else {
+    shouldReverse = last.y < first.y ||
+      (last.y === first.y && last.x < first.x)
+  }
+
+  return shouldReverse ? path.slice().reverse() : path.slice()
+}
+
+/**
+ * Apply a direction/order policy to reconstructed paths.
+ *
+ * natural: canonicalize open paths, then choose the nearest canonical start.
+ * shortest: greedily choose the nearest endpoint and reverse open paths when
+ * that lowers pen-up travel. This is a fast heuristic, not a global optimum.
+ * trace: preserve skeleton traversal direction and discovery order.
+ */
+export function orderStrokePaths(
+  paths: StrokePoint[][],
+  strategy: StrokeDirectionStrategy = 'natural'
+): StrokePoint[][] {
   const remaining = paths.filter(path => path.length >= 2).map(path => path.slice())
   if (!remaining.length) return []
-  // Stable initial choice: upper-left endpoint of the upper-left path.
-  let firstIndex = 0
-  let firstScore = Infinity
-  let firstReverse = false
-  for (let i = 0; i < remaining.length; i++) {
-    for (const reverse of [false, true]) {
-      const p = reverse ? remaining[i][remaining[i].length - 1] : remaining[i][0]
-      const score = p.y * 1_000_000 + p.x
-      if (score < firstScore) { firstScore = score; firstIndex = i; firstReverse = reverse }
-    }
-  }
-  const first = remaining.splice(firstIndex, 1)[0]
-  if (firstReverse) first.reverse()
-  const ordered = [first]
+  if (strategy === 'trace') return remaining
 
+  const isClosed = (path: StrokePoint[]) =>
+    path.length > 2 &&
+    Math.hypot(path[0].x - path[path.length - 1].x, path[0].y - path[path.length - 1].y) <= 1.5
+
+  if (strategy === 'natural') {
+    for (let i = 0; i < remaining.length; i++) remaining[i] = orientStrokeDirection(remaining[i])
+    remaining.sort((a, b) => a[0].y - b[0].y || a[0].x - b[0].x)
+  } else {
+    // Seed from the upper-left-most component for repeatable output.
+    remaining.sort((a, b) => {
+      const pa = a[0], pb = b[0]
+      return pa.y - pb.y || pa.x - pb.x
+    })
+  }
+
+  const ordered: StrokePoint[][] = [remaining.shift()!]
   while (remaining.length) {
     const end = ordered[ordered.length - 1][ordered[ordered.length - 1].length - 1]
-    let bestIndex = 0, bestReverse = false, bestCost = Infinity
+    let bestIndex = 0
+    let bestReverse = false
+    let bestCost = Infinity
     for (let i = 0; i < remaining.length; i++) {
       const path = remaining[i]
-      const start = path[0], finish = path[path.length - 1]
-      const a = (end.x - start.x) ** 2 + (end.y - start.y) ** 2
-      const b = (end.x - finish.x) ** 2 + (end.y - finish.y) ** 2
-      if (a < bestCost) { bestCost = a; bestIndex = i; bestReverse = false }
-      if (b < bestCost) { bestCost = b; bestIndex = i; bestReverse = true }
+      const start = path[0]
+      const startCost = (end.x - start.x) ** 2 + (end.y - start.y) ** 2
+      if (startCost < bestCost) {
+        bestCost = startCost
+        bestIndex = i
+        bestReverse = false
+      }
+      if (strategy === 'shortest' && !isClosed(path)) {
+        const last = path[path.length - 1]
+        const endCost = (end.x - last.x) ** 2 + (end.y - last.y) ** 2
+        if (endCost < bestCost) {
+          bestCost = endCost
+          bestIndex = i
+          bestReverse = true
+        }
+      }
     }
-    const next = remaining.splice(bestIndex, 1)[0]
-    if (bestReverse) next.reverse()
-    ordered.push(next)
+    const [next] = remaining.splice(bestIndex, 1)
+    ordered.push(bestReverse ? next.reverse() : next)
   }
   return ordered
 }
@@ -247,7 +311,8 @@ export function traceSkeletonPaths(
   width: number,
   height: number,
   rect: Rect,
-  diagonalConnectivity = false
+  diagonalConnectivity = false,
+  onProgress?: (progress: number) => void
 ): { paths: StrokePoint[][]; endpoints: number; junctionPixels: number; closedLoops: number } {
   const neighbors = new Map<number, number[]>()
   let endpoints = 0, junctionPixels = 0
@@ -260,6 +325,7 @@ export function traceSkeletonPaths(
       if (list.length === 1) endpoints++
       if (list.length >= 3) junctionPixels++
     }
+    if ((y - rect.y) % 32 === 0) onProgress?.((y - rect.y) / rect.h)
   }
 
   const visitedEdges = new Set<string>()
@@ -335,11 +401,19 @@ export function reconstructStrokePaths(
     }
   }
 
-  const skeleton = thinBinaryMask(edge, width, height, rect, options.maxThinningIterations ?? 80)
+  options.onProgress?.(0.02, '准备骨架')
+  const maxIterations = options.maxThinningIterations ?? 80
+  const skeleton = thinBinaryMask(edge, width, height, rect, maxIterations, (iteration, total) => {
+    options.onProgress?.(0.04 + 0.58 * iteration / total, '骨架细化')
+  })
   let skeletonPixels = 0
   for (const value of skeleton) skeletonPixels += value ? 1 : 0
 
-  const traced = traceSkeletonPaths(skeleton, width, height, rect, options.diagonalConnectivity ?? false)
+  options.onProgress?.(0.64, '提取路径拓扑')
+  const traced = traceSkeletonPaths(skeleton, width, height, rect, options.diagonalConnectivity ?? false, progress => {
+    options.onProgress?.(0.64 + 0.16 * progress, '提取路径拓扑')
+  })
+  options.onProgress?.(0.82, '简化与重采样')
   const minLength = Math.max(0, options.minPathLength ?? 3)
   const simplified = traced.paths
     .filter(path => pathLength(path) >= minLength)
@@ -349,7 +423,9 @@ export function reconstructStrokePaths(
     })
     .filter(path => path.length >= 2)
 
-  const strokes = orderStrokePaths(simplified)
+  options.onProgress?.(0.94, '笔画排序')
+  const strokes = orderStrokePaths(simplified, options.directionStrategy ?? 'natural')
+  options.onProgress?.(1, '完成')
   return {
     strokes,
     diagnostics: {
@@ -365,11 +441,20 @@ export function reconstructStrokePaths(
 }
 
 /** Serialize versioned stroke data; keeps legacy flat point JSON untouched. */
-export function serializeStrokePaths(strokes: StrokePoint[][]): string {
+export function serializeStrokePaths(
+  strokes: StrokePoint[][],
+  strategy: StrokeDirectionStrategy = 'natural'
+): string {
+  const ordering = strategy === 'natural'
+    ? 'natural-direction-nearest-start'
+    : strategy === 'shortest'
+      ? 'greedy-minimum-pen-up-travel'
+      : 'skeleton-trace-order'
   return JSON.stringify({
     version: 2,
     coordinateSystem: 'crop-local',
-    ordering: 'heuristic-minimum-pen-up-travel',
+    strategy,
+    ordering,
     strokes
   }, null, 2)
 }
